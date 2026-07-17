@@ -77,15 +77,6 @@
   #btn-generate:disabled{opacity:0.35;cursor:not-allowed;}
   #status{margin-top:12px;font-size:11.5px;letter-spacing:0.5px;color:var(--text-dim);min-height:16px;}
 
-  .howto{font-size:11.5px;line-height:2;color:var(--text-dim);letter-spacing:0.4px;}
-  .howto b{color:var(--text);}
-  .howto .n{color:var(--cyan);}
-  .note{margin-top:10px;padding:10px 12px;border-left:2px solid var(--amber);background:rgba(255,176,32,0.06);
-    font-size:10.5px;line-height:1.9;color:var(--text-dim);}
-  .note b{color:var(--amber);}
-  footer{max-width:860px;margin:26px auto 0;font-size:9.5px;letter-spacing:1.5px;color:var(--text-dim);
-    display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;}
-  footer a{color:var(--cyan);text-decoration:none;}
   @media (max-width:600px){ header h1{font-size:15px;} .controls label{flex:1;} select,input[type=number],input[type=text]{min-width:0;width:100%;} }
 </style>
 </head>
@@ -113,10 +104,24 @@
 
 <div class="panel">
   <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-  <h2><span class="step">2</span> PILIH BULAN LAPORAN BARU</h2>
+  <h2><span class="step">2</span> PILIH PERIODE LAPORAN BARU</h2>
   <div class="controls">
-    <label>BULAN
+    <label>JENIS
+      <select id="sel-jenis">
+        <option value="bulanan" selected>BULANAN</option>
+        <option value="triwulan">TRIWULAN</option>
+      </select>
+    </label>
+    <label id="lbl-bulan">BULAN
       <select id="sel-bulan"></select>
+    </label>
+    <label id="lbl-triwulan" style="display:none">TRIWULAN
+      <select id="sel-triwulan">
+        <option value="0">I (JAN&ndash;MAR)</option>
+        <option value="1">II (APR&ndash;JUN)</option>
+        <option value="2">III (JUL&ndash;SEP)</option>
+        <option value="3">IV (OKT&ndash;DES)</option>
+      </select>
     </label>
     <label>TAHUN
       <input type="number" id="sel-tahun" min="2024" max="2099">
@@ -137,31 +142,6 @@
   </div>
   <div id="status"></div>
 </div>
-
-<div class="panel">
-  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-  <h2><span class="step">?</span> CARA KERJA</h2>
-  <div class="howto">
-    <span class="n">01</span> &mdash; Masukkan file laporan bulan sebelumnya; bulan asalnya terdeteksi otomatis.<br>
-    <span class="n">02</span> &mdash; Pilih bulan &amp; tahun laporan baru. Isian <b>NAMA DESA</b> mengganti
-    seluruh penyebutan nama desa di dokumen (kosongkan bila tetap sesuai dokumen asal).
-    Opsi <b>NARASI</b> mengganti Latar Belakang, Tujuan, Kesimpulan, Saran, serta tabel
-    Permasalahan &amp; Pemecahan Masalah dengan variasi lain yang tetap sesuai judul laporannya
-    (ACAK = tiap file dipilihkan A/B/C acak), supaya laporan antarbulan tidak berbunyi sama persis.<br>
-    <span class="n">03</span> &mdash; Satu file ZIP terunduh berisi semua laporan baru: nama bulan, periode
-    (mis. <b>01-30 &rarr; 01-31</b>), tanggal tanda tangan, tahun, dan tabel realisasi harian
-    (tanggal + hari, baris ditambah/dikurangi sesuai jumlah hari) sudah disesuaikan &mdash; format, logo,
-    dan tanda tangan tetap persis seperti aslinya.
-  </div>
-  <div class="note"><b>PERHATIAN:</b> angka target/realisasi &amp; uraian kegiatan masih berisi
-    data bulan sumber &mdash; buka hasilnya di Word dan sesuaikan isi datanya sebelum dikumpulkan.
-    Laporan adalah dokumen resmi; pastikan isinya menggambarkan kegiatan yang benar-benar dilaksanakan.</div>
-</div>
-
-<footer>
-  <span>SKP FORGE v2.0 &middot; OFFLINE-CAPABLE &middot; CLIENT-SIDE ONLY</span>
-  <span>DIPROSES 100% DI PERANGKAT INI</span>
-</footer>
 
 <script>
 const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
@@ -1013,7 +993,7 @@ C: {
 };
 
 const escXml = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const fillB = (s, dst, desa) => s.split('{B}').join('Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year)
+const fillB = (s, dst, desa) => s.split('{B}').join(dst.label || ('Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year))
                                  .split('{D}').join(desa || 'Otting');
 
 // ===== deteksi & penggantian nama desa =====
@@ -1028,14 +1008,11 @@ function detectDesa(xml){
   return best;
 }
 
-// mesin ganti kata utuh lintas-run: Word bisa memecah kata jadi beberapa run,
+// mesin ganti teks lintas-run: Word bisa memecah kata jadi beberapa run,
 // jadi pencarian dilakukan pada teks GABUNGAN per paragraf lalu hasilnya
 // ditulis balik ke run (panjang isi <w:t> boleh berubah). Dipakai untuk
-// nama desa, nama bulan, dan tahun.
-function swapRunText(xml, from, to){
-  if(!from || !to || from === to) return xml;
-  const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('\\b' + esc + '\\b', 'g');
+// nama desa, nama bulan, tahun, dan label periode triwulan.
+function swapRunRegex(xml, re, to){
   const ins = escXml(to);
   return xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, para => {
     const runs = [];
@@ -1046,15 +1023,18 @@ function swapRunText(xml, from, to){
     }
     const hits = [];
     let m2; re.lastIndex = 0;
-    while((m2 = re.exec(joined))) hits.push(m2.index);
+    while((m2 = re.exec(joined))){
+      hits.push({ pos: m2.index, len: m2[0].length });
+      if(!m2[0].length) re.lastIndex++;
+    }
     if(!hits.length) return para;
     // proses dari belakang: edit terdahulu selalu di posisi lebih akhir,
     // jadi indeks (koordinat teks asli) untuk hit berikutnya tetap sahih
-    hits.reverse().forEach(pos => {
-      const end = pos + from.length;
+    hits.reverse().forEach(h => {
+      const end = h.pos + h.len;
       let placed = false;
       runs.forEach(r => {
-        const a = Math.max(pos, r.at), b = Math.min(end, r.at + r.len0);
+        const a = Math.max(h.pos, r.at), b = Math.min(end, r.at + r.len0);
         if(a >= b) return;
         r.t = r.t.slice(0, a - r.at) + (placed ? '' : ins) + r.t.slice(b - r.at);
         placed = true;
@@ -1065,7 +1045,79 @@ function swapRunText(xml, from, to){
       (a, o, t, c) => o + runs[k++].t + c);
   });
 }
+function swapRunText(xml, from, to){
+  if(!from || !to || from === to) return xml;
+  const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return swapRunRegex(xml, new RegExp('\\b' + esc + '\\b', 'g'), to);
+}
 const replaceDesa = (xml, from, to) => swapRunText(xml, from, to);
+
+// ===== LAPORAN TRIWULAN: gabung tabel harian + label periode =====
+const ROMAWI = ['I', 'II', 'III', 'IV'];
+const labelTriwulan = q => 'Triwulan ' + ROMAWI[q.qIdx] + ' Tahun ' + q.year;
+
+// rentang baris <w:tr> pertama s/d terakhir yang memuat tanggal dd/mm/yyyy
+function dailyRowSpan(xml){
+  const re = /\d{2}\/\d{2}\/\d{4}/g;
+  let first = -1, last = -1, m;
+  while((m = re.exec(xml))){ if(first < 0) first = m.index; last = m.index; }
+  if(first < 0) return null;
+  let start = first;
+  while((start = xml.lastIndexOf('<w:tr', start - 1)) >= 0){
+    const c = xml[start + 5];
+    if(c === ' ' || c === '>') break;
+  }
+  const end = xml.indexOf('</w:tr>', last);
+  return (start >= 0 && end >= 0) ? { start, end: end + 7 } : null;
+}
+
+// sisipkan baris harian bulan-bulan sebelumnya (urut) di depan baris dokumen dasar
+function mergeDailyRows(baseXml, otherXmls){
+  const span = dailyRowSpan(baseXml);
+  if(!span) return baseXml;
+  let rows = '';
+  otherXmls.forEach(ox => {
+    const s = dailyRowSpan(ox);
+    if(s) rows += ox.slice(s.start, s.end);
+  });
+  return rows ? baseXml.slice(0, span.start) + rows + baseXml.slice(span.start) : baseXml;
+}
+
+// ubah label periode dokumen bulanan menjadi triwulan (dokumen dasar =
+// laporan bulan terakhir triwulan yang tersedia)
+function transformXmlTriwulan(xml, src, q){
+  const sName = BULAN[src.mIdx], SNAME = sName.toUpperCase();
+  const m1 = q.qIdx * 3, m3 = m1 + 2;
+  const qLast = lastDay(q.year, m3);
+  const R = ROMAWI[q.qIdx];
+  // judul sampul & frasa "Bulan X (Tahun)"
+  xml = swapRunRegex(xml, new RegExp('BULAN\\s+' + SNAME + '\\s+' + src.year, 'g'), 'TRIWULAN ' + R + ' TAHUN ' + q.year);
+  xml = swapRunRegex(xml, new RegExp('BULAN\\s+' + SNAME + '\\b', 'g'), 'TRIWULAN ' + R);
+  xml = swapRunRegex(xml, new RegExp('Bulan\\s+' + sName + '\\s+' + src.year, 'g'), 'Triwulan ' + R + ' Tahun ' + q.year);
+  xml = swapRunRegex(xml, new RegExp('Bulan\\s+' + sName + '\\b', 'g'), 'Triwulan ' + R);
+  // waktu pelaksanaan: "01-30 Juni 2026" / "01 s/d 30 Juni 2026"
+  xml = swapRunRegex(xml, new RegExp('01\\s*[-–]\\s*\\d{1,2}\\s+' + sName, 'g'),
+    '01 ' + BULAN[m1] + ' - ' + qLast + ' ' + BULAN[m3]);
+  xml = swapRunRegex(xml, new RegExp('01\\s+s/d\\s+\\d{1,2}\\s+' + sName, 'g'),
+    '01 ' + BULAN[m1] + ' s/d ' + qLast + ' ' + BULAN[m3]);
+  // tanggal tanda tangan ", 30 Juni 2026"
+  xml = swapRunRegex(xml, new RegExp(',\\s*\\d{1,2}\\s+' + sName + '\\s+' + src.year, 'g'),
+    ', ' + qLast + ' ' + BULAN[m3] + ' ' + q.year);
+  // sisa nama bulan sumber -> bulan akhir triwulan; tahun bila berbeda
+  xml = swapRunText(xml, sName, BULAN[m3]);
+  xml = swapRunText(xml, SNAME, BULAN[m3].toUpperCase());
+  if(src.year !== q.year) xml = swapRunText(xml, String(src.year), String(q.year));
+  return xml;
+}
+
+function transformNameTriwulan(name, src, q){
+  const t = 'Triwulan ' + ROMAWI[q.qIdx];
+  let n = name.split(BULAN[src.mIdx]).join(t)
+              .split(BULAN[src.mIdx].toUpperCase()).join(t.toUpperCase())
+              .split(BULAN[src.mIdx].toLowerCase()).join(t);
+  if(src.year !== q.year) n = n.split(String(src.year)).join(String(q.year));
+  return n;
+}
 
 // ganti seluruh isi teks satu paragraf, format (pPr + rPr run pertama) dipertahankan
 function replaceParaText(paraXml, text){
@@ -1167,10 +1219,18 @@ BULAN.forEach((b, i) => {
   o.value = i; o.textContent = b.toUpperCase();
   selBulan.appendChild(o);
 });
-// default: bulan berjalan
+// default: bulan & triwulan berjalan
 const now = new Date();
 selBulan.value = now.getMonth();
 selTahun.value = now.getFullYear();
+document.getElementById('sel-triwulan').value = Math.floor(now.getMonth() / 3);
+
+const selJenis = document.getElementById('sel-jenis');
+selJenis.addEventListener('change', () => {
+  const tw = selJenis.value === 'triwulan';
+  document.getElementById('lbl-bulan').style.display = tw ? 'none' : '';
+  document.getElementById('lbl-triwulan').style.display = tw ? '' : 'none';
+});
 
 function setStatus(msg, tone){
   statusEl.textContent = msg;
@@ -1229,40 +1289,89 @@ btn.addEventListener('click', async () => {
   if(busy) return;
   busy = true; btn.disabled = true;
   try {
-    const dst = { mIdx: parseInt(selBulan.value, 10), year: parseInt(selTahun.value, 10) };
-    if(!(dst.year >= 2024 && dst.year <= 2099)){ setStatus('tahun tidak valid', 'err'); return; }
+    const jenis = selJenis.value;
+    const year = parseInt(selTahun.value, 10);
+    if(!(year >= 2024 && year <= 2099)){ setStatus('tahun tidak valid', 'err'); return; }
+    const mode = document.getElementById('sel-narasi').value;
+    const desaIn = document.getElementById('sel-desa').value.trim();
     const out = new JSZip();
-    let done = 0;
-    for(const f of files){
-      if(!f.src) continue;
-      if(f.src.mIdx === dst.mIdx && f.src.year === dst.year){
-        setStatus('bulan target sama dengan bulan asal: ' + f.name, 'warn'); continue;
-      }
-      setStatus('memproses ' + f.name + ' ...');
-      const zip = await JSZip.loadAsync(f.file);
-      let xml = await zip.file('word/document.xml').async('string');
-      // 1) nama desa (isian pengguna menggantikan nama desa terdeteksi)
-      const desaIn = document.getElementById('sel-desa').value.trim();
+    let done = 0, zipName;
+
+    // ganti desa + terapkan variasi narasi pada satu document.xml
+    const olahNarasi = (xml, f, dstFill) => {
       const desaFinal = desaIn || f.desa || null;
       if(desaIn && f.desa && desaIn !== f.desa) xml = replaceDesa(xml, f.desa, desaIn);
-      // 2) variasi narasi (teksnya sudah memakai bulan & desa target), baru tanggal
-      const mode = document.getElementById('sel-narasi').value;
       if(mode !== 'asli' && f.tipe && VARIANTS[f.tipe.key]){
         const pilih = mode === 'acak' ? ['A','B','C'][Math.floor(Math.random() * 3)] : mode;
-        xml = applyVariant(xml, VARIANTS[f.tipe.key][pilih], dst, desaFinal);
+        xml = applyVariant(xml, VARIANTS[f.tipe.key][pilih], dstFill, desaFinal);
       }
-      zip.file('word/document.xml', transformXml(xml, f.src, dst));
+      return xml;
+    };
+    const bungkus = async (zip, xml, name) => {
+      zip.file('word/document.xml', xml);
       const blob = await zip.generateAsync({ type: 'blob',
         compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-      out.file(transformName(f.name, f.src, dst), blob);
+      out.file(name, blob);
       done++;
+    };
+
+    if(jenis === 'triwulan'){
+      const q = { qIdx: parseInt(document.getElementById('sel-triwulan').value, 10), year };
+      const mQ = [q.qIdx * 3, q.qIdx * 3 + 1, q.qIdx * 3 + 2];
+      const cand = files.filter(f => f.src && f.src.year === q.year && mQ.includes(f.src.mIdx));
+      if(!cand.length){
+        setStatus('tidak ada file dari ' + BULAN[mQ[0]] + '–' + BULAN[mQ[2]] + ' ' + q.year +
+          ' — masukkan laporan bulanan dari triwulan tersebut.', 'warn');
+        return;
+      }
+      // kelompokkan per judul laporan; dokumen bulan terakhir jadi dasar,
+      // baris tabel harian bulan-bulan sebelumnya digabungkan ke dalamnya
+      const groups = {};
+      cand.forEach(f => {
+        const k = f.tipe ? f.tipe.key : 'file:' + f.name;
+        (groups[k] = groups[k] || []).push(f);
+      });
+      for(const k of Object.keys(groups)){
+        const g = groups[k].sort((a, b) => a.src.mIdx - b.src.mIdx);
+        const base = g[g.length - 1];
+        setStatus('memproses triwulan: ' + base.name + ' ...');
+        const zip = await JSZip.loadAsync(base.file);
+        let xml = await zip.file('word/document.xml').async('string');
+        const others = [];
+        for(const o of g.slice(0, -1)){
+          const oz = await JSZip.loadAsync(o.file);
+          let ox = await oz.file('word/document.xml').async('string');
+          if(desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
+          others.push(ox);
+        }
+        xml = mergeDailyRows(xml, others);
+        xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
+        await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
+          transformNameTriwulan(base.name, base.src, q));
+      }
+      zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
+    } else {
+      const dst = { mIdx: parseInt(selBulan.value, 10), year };
+      for(const f of files){
+        if(!f.src) continue;
+        if(f.src.mIdx === dst.mIdx && f.src.year === dst.year){
+          setStatus('bulan target sama dengan bulan asal: ' + f.name, 'warn'); continue;
+        }
+        setStatus('memproses ' + f.name + ' ...');
+        const zip = await JSZip.loadAsync(f.file);
+        let xml = await zip.file('word/document.xml').async('string');
+        xml = olahNarasi(xml, f, dst);
+        await bungkus(zip, transformXml(xml, f.src, dst), transformName(f.name, f.src, dst));
+      }
+      zipName = 'Laporan SKP ' + BULAN[dst.mIdx] + ' ' + dst.year + '.zip';
     }
+
     if(!done){ setStatus('tidak ada file yang diproses.', 'warn'); return; }
     setStatus('membungkus ZIP ...');
     const zipBlob = await out.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(zipBlob);
-    a.download = 'Laporan SKP ' + BULAN[parseInt(selBulan.value, 10)] + ' ' + selTahun.value + '.zip';
+    a.download = zipName;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 30000);
     setStatus('✓ ' + done + ' laporan digenerate — periksa & sesuaikan angka realisasinya di Word.', 'ok');
@@ -1275,7 +1384,8 @@ btn.addEventListener('click', async () => {
 
 // dipakai pengujian otomatis
 window._skp = { detectSource, transformXml, transformName, lastDay,
-  detectTipe, applyVariant, VARIANTS, detectDesa, replaceDesa };
+  detectTipe, applyVariant, VARIANTS, detectDesa, replaceDesa,
+  transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
