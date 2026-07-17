@@ -1230,6 +1230,8 @@ selJenis.addEventListener('change', () => {
   const tw = selJenis.value === 'triwulan';
   document.getElementById('lbl-bulan').style.display = tw ? 'none' : '';
   document.getElementById('lbl-triwulan').style.display = tw ? '' : 'none';
+  setStatus(tw ? 'mode TRIWULAN: masukkan 3 laporan BERJUDUL SAMA, satu per bulan triwulan ' +
+    '(mis. LTT April + Mei + Juni) — judul lain jangan dicampur.' : '');
 });
 
 function setStatus(msg, tone){
@@ -1321,34 +1323,54 @@ btn.addEventListener('click', async () => {
       const cand = files.filter(f => f.src && f.src.year === q.year && mQ.includes(f.src.mIdx));
       if(!cand.length){
         setStatus('tidak ada file dari ' + BULAN[mQ[0]] + '–' + BULAN[mQ[2]] + ' ' + q.year +
-          ' — masukkan laporan bulanan dari triwulan tersebut.', 'warn');
+          ' — masukkan 3 laporan bulanan (judul sama) dari triwulan tersebut.', 'warn');
         return;
       }
-      // kelompokkan per judul laporan; dokumen bulan terakhir jadi dasar,
-      // baris tabel harian bulan-bulan sebelumnya digabungkan ke dalamnya
-      const groups = {};
-      cand.forEach(f => {
-        const k = f.tipe ? f.tipe.key : 'file:' + f.name;
-        (groups[k] = groups[k] || []).push(f);
-      });
-      for(const k of Object.keys(groups)){
-        const g = groups[k].sort((a, b) => a.src.mIdx - b.src.mIdx);
-        const base = g[g.length - 1];
-        setStatus('memproses triwulan: ' + base.name + ' ...');
-        const zip = await JSZip.loadAsync(base.file);
-        let xml = await zip.file('word/document.xml').async('string');
-        const others = [];
-        for(const o of g.slice(0, -1)){
-          const oz = await JSZip.loadAsync(o.file);
-          let ox = await oz.file('word/document.xml').async('string');
-          if(desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
-          others.push(ox);
-        }
-        xml = mergeDailyRows(xml, others);
-        xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
-        await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
-          transformNameTriwulan(base.name, base.src, q));
+      // SATU judul saja per generate: judul berbeda tidak boleh dicampur
+      // supaya isi laporan triwulan tidak teraduk antarjudul
+      const judul = f => f.tipe ? f.tipe.key : f.name.toLowerCase().replace(/\.docx$/, '')
+        .replace(new RegExp(BULAN.join('|'), 'gi'), '').replace(/[\d\s.\-_]+/g, ' ').trim();
+      const label = f => f.tipe ? f.tipe.label : f.name;
+      const juduls = [...new Set(cand.map(judul))];
+      if(juduls.length > 1){
+        const daftar = [...new Set(cand.map(label))].join(', ');
+        setStatus('mode TRIWULAN hanya menerima laporan dengan JUDUL YANG SAMA — terdeteksi campuran: ' +
+          daftar + '. Hapus judul lain, proses satu judul per generate.', 'err');
+        return;
       }
+      // tepat satu file per bulan, dan ketiga bulan triwulan harus lengkap
+      const perBulan = {};
+      cand.forEach(f => (perBulan[f.src.mIdx] = perBulan[f.src.mIdx] || []).push(f));
+      const ganda = Object.keys(perBulan).filter(m => perBulan[m].length > 1);
+      if(ganda.length){
+        setStatus('ada lebih dari satu file untuk bulan ' +
+          ganda.map(m => BULAN[m]).join(', ') + ' — sisakan satu file per bulan.', 'err');
+        return;
+      }
+      const kurang = mQ.filter(m => !perBulan[m]);
+      if(kurang.length){
+        setStatus('laporan triwulan butuh 3 bulan lengkap (' + mQ.map(m => BULAN[m]).join(', ') +
+          ') — belum ada: ' + kurang.map(m => BULAN[m]).join(', ') + '.', 'err');
+        return;
+      }
+      // dokumen bulan terakhir jadi dasar; baris tabel harian dua bulan
+      // sebelumnya digabungkan ke dalamnya
+      const g = cand.sort((a, b) => a.src.mIdx - b.src.mIdx);
+      const base = g[g.length - 1];
+      setStatus('memproses triwulan: ' + base.name + ' ...');
+      const zip = await JSZip.loadAsync(base.file);
+      let xml = await zip.file('word/document.xml').async('string');
+      const others = [];
+      for(const o of g.slice(0, -1)){
+        const oz = await JSZip.loadAsync(o.file);
+        let ox = await oz.file('word/document.xml').async('string');
+        if(desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
+        others.push(ox);
+      }
+      xml = mergeDailyRows(xml, others);
+      xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
+      await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
+        transformNameTriwulan(base.name, base.src, q));
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
     } else {
       const dst = { mIdx: parseInt(selBulan.value, 10), year };
