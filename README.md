@@ -1,6 +1,6 @@
 # SKP FORGE — Laporan Bulanan
 
-Situs statis murni — buka `index.html` lewat server statis apa pun, atau
+Situs statis — buka `index.html` lewat server statis apa pun, atau
 deploy langsung ke Vercel/Netlify/GitHub Pages tanpa build step.
 
 > **Perhatian:** angka target/realisasi dan uraian kegiatan masih berisi data
