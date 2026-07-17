@@ -1,8 +1,13 @@
 // SKP FORGE — service worker (offline shell)
-const VERSION = 'skp-forge-v1.0.0';
+const VERSION = 'skp-forge-v1.0.1';
 const SHELL_ASSETS = [
   './',
   './index.html',
+  './manifest.webmanifest',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
   './vendor/jszip.min.js',
   './vendor/fonts.css',
   './vendor/fonts/orbitron-500-latin.woff2',
