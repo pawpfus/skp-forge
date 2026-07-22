@@ -52,8 +52,7 @@
   #dropzone{border:1.5px dashed rgba(46,224,255,0.45);padding:34px 16px;text-align:center;cursor:pointer;
     transition:background 0.15s, border-color 0.15s;font-size:12.5px;color:var(--text-dim);letter-spacing:1px;line-height:1.9;}
   #dropzone:hover,#dropzone.over{background:rgba(46,224,255,0.06);border-color:var(--cyan);color:var(--text);}
-  #dropzone b{color:var(--cyan);font-size:14px;letter-spacing:2px;display:block;margin-bottom:4px;}
-  #dropzone .sub{font-size:10.5px;}
+  #dropzone b{color:var(--cyan);font-size:14px;letter-spacing:2px;display:block;}
 
   table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px;}
   th,td{border:1px solid rgba(46,224,255,0.18);padding:7px 9px;text-align:left;vertical-align:top;}
@@ -94,9 +93,7 @@
   <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
   <h2><span class="step">1</span> MASUKKAN LAPORAN BULAN LALU (.docx)</h2>
   <div id="dropzone">
-    <b>SERET FILE KE SINI / KETUK UNTUK MEMILIH</b>
-    <span class="sub">semua laporan .docx bulan sebelumnya (bisa sekaligus 8–11 file) &middot;
-    diproses 100% di perangkat ini — tidak ada file yang diunggah ke server</span>
+    <b>SERET / KETUK</b>
   </div>
   <input type="file" id="file-input" accept=".docx" multiple style="display:none">
   <div id="file-list"></div>
@@ -138,7 +135,7 @@
         <option value="acak" selected>ACAK A/B/C PER FILE</option>
       </select>
     </label>
-    <button id="btn-generate" disabled>&#9889; GENERATE &rarr; ZIP</button>
+    <button id="btn-generate" disabled>&#9889; BUAT</button>
   </div>
   <div id="status"></div>
 </div>
