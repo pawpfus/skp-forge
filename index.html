@@ -193,6 +193,8 @@
     </div>
     <div class="lamp-grid-wrap"><table id="lamp-grid"></table></div>
     <div class="lamp-foot">
+      <button id="lamp-impor" hidden>&#8681; IMPOR LAPORAN DISEMINASI</button>
+      <input type="file" id="lamp-impor-file" accept=".docx" style="display:none">
       <button id="lamp-add">+ BARIS</button>
       <button id="lamp-reset">KEMBALIKAN ASLI</button>
       <span class="lamp-hint" id="lamp-hint"></span>
@@ -1333,6 +1335,80 @@ function findLampiran(xml){
            tblStart: rg.start + tm.index, tblEnd: rg.start + tm.index + tm[0].length };
 }
 
+// ===== IMPOR LAPORAN DISEMINASI =====
+// Laporan Diseminasi Informasi berisi blok berulang "LAPORAN KEGIATAN
+// DISEMINASI INFORMASI PERTANIAN" — satu blok satu kegiatan. Isinya dipanen
+// menjadi baris tabel rincian pada Laporan Pelaksanaan Tugas & Fungsi.
+const paraTeks = xml => [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)]
+  .map(m => unescXml([...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
+    .map(q => q[1]).join('')).replace(/\s+/g, ' ').trim())
+  .filter(t => t);
+
+// tabel rincian diseminasi dikenali dari judul kolomnya, bukan nama file
+function isTabelDiseminasi(labels){
+  const ada = re => labels.some(l => re.test(l));
+  return ada(/materi/i) && ada(/metode/i) && ada(/peserta/i);
+}
+
+function parseDiseminasi(xml){
+  const paras = paraTeks(xml);
+  const awal = [];
+  paras.forEach((t, i) => { if(/^LAPORAN KEGIATAN DISEMINASI/i.test(t)) awal.push(i); });
+  if(!awal.length) return [];
+  const ambil = (blok, label) => {
+    const re = new RegExp('^' + label + '\\s*:\\s*', 'i');
+    for(const t of blok) if(re.test(t)) return t.replace(re, '').trim();
+    return '';
+  };
+  // baris penutup blok: "Pitu Riawa, 8 Juni 2026" / "Mengetahui," / "NIP. ..."
+  const penutup = t => /^[A-Za-z .'-]+,\s*\d{1,2}\s+\S+\s+\d{4}$/.test(t) ||
+    /^(Mengetahui|Koordinator|NIP\.)/i.test(t);
+  const hasilDari = blok => {
+    let i = blok.findIndex(t => /^Hasil Kegiatan\s*:/i.test(t));
+    if(i < 0) return '';
+    const masalah = [], solusi = [];
+    let mode = null;
+    const potong = (t, re, bak) => { const r = t.replace(re, '').trim(); if(r) bak.push(r); };
+    for(let k = i; k < blok.length; k++){
+      let t = blok[k];
+      if(k === i) t = t.replace(/^Hasil Kegiatan\s*:\s*/i, '').trim();
+      if(!t) continue;
+      if(penutup(t)) break;
+      if(/^Masalah\s*:/i.test(t)){ mode = 'm'; potong(t, /^Masalah\s*:\s*/i, masalah); continue; }
+      if(/^Solusi\s*:/i.test(t)){ mode = 's'; potong(t, /^Solusi\s*:\s*/i, solusi); continue; }
+      (mode === 's' ? solusi : masalah).push(t);
+    }
+    const gab = a => a.join(' ').replace(/\s+/g, ' ').trim();
+    const m = gab(masalah), s = gab(solusi);
+    return (m ? 'Masalah: ' + m : '') + (s ? (m ? ' ' : '') + 'Solusi: ' + s : '');
+  };
+  return awal.map((mulai, idx) => {
+    const blok = paras.slice(mulai, awal[idx + 1] !== undefined ? awal[idx + 1] : paras.length);
+    return {
+      tanggal: ambil(blok, 'Waktu Pelaksanaan').replace(/^[A-Za-z]+,\s*/, '').trim(),
+      materi: ambil(blok, 'Materi Diseminasi') || ambil(blok, 'Materi'),
+      lokasi: ambil(blok, 'Tempat/Lokasi') || ambil(blok, 'Lokasi'),
+      metode: ambil(blok, 'Metode'),
+      peserta: ambil(blok, 'Peserta'),
+      hasil: hasilDari(blok)
+    };
+  }).filter(k => k.materi || k.tanggal);
+}
+
+// susun kegiatan hasil impor mengikuti urutan & jumlah kolom tabel tujuan
+function barisDiseminasi(kegiatan, labels){
+  return kegiatan.map((k, i) => labels.map(l => {
+    if(/^no\.?$/i.test(l.trim())) return String(i + 1);
+    if(/tanggal|waktu/i.test(l)) return k.tanggal;
+    if(/materi|kegiatan|uraian/i.test(l)) return k.materi;
+    if(/lokasi|tempat/i.test(l)) return k.lokasi;
+    if(/metode/i.test(l)) return k.metode;
+    if(/peserta/i.test(l)) return k.peserta;
+    if(/hasil|masalah|solusi/i.test(l)) return k.hasil;
+    return '';
+  }));
+}
+
 // tulis teks ke satu sel (paragraf pertama dipakai, sisanya dikosongkan);
 // bentuk swa-tutup dicoba lebih dulu agar tak tertelan pola paragraf biasa
 function setCellText(tc, text){
@@ -1486,11 +1562,15 @@ function bukaLampiran(i){
   document.getElementById('lamp-sub').textContent = f.name;
   const auto = f.lamp.dateCols.length;
   document.getElementById('lamp-add').style.display = auto ? 'none' : '';
+  const bisaImpor = !auto && isTabelDiseminasi(f.lamp.labels);
+  document.getElementById('lamp-impor').hidden = !bisaImpor;
   document.getElementById('lamp-hint').textContent = auto
     ? 'kolom tanggal (kuning) mengikuti periode target secara otomatis; jumlah baris menyesuaikan jumlah hari'
-    : 'isi sesuai data terbaru; baris boleh ditambah atau dihapus';
-  gambarGrid();
-  modal.hidden = false;
+    : bisaImpor
+      ? 'isi manual, atau impor langsung dari file Laporan Diseminasi Informasi (.docx)'
+      : 'isi sesuai data terbaru; baris boleh ditambah atau dihapus';
+  modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
+  gambarGrid();           // saat elemennya sudah punya layout
 }
 function gambarGrid(){
   const lamp = files[lampIdx].lamp;
@@ -1508,12 +1588,14 @@ function gambarGrid(){
     h += '</tr>';
   });
   grid.innerHTML = h;
+  // tinggi mengikuti isi (dibatasi) supaya teks panjang tidak terpotong
+  const tumbuh = t => {
+    t.style.height = 'auto';
+    t.style.height = Math.max(30, Math.min(t.scrollHeight + 2, 150)) + 'px';
+  };
   grid.querySelectorAll('textarea').forEach(t => {
-    t.addEventListener('input', () => {
-      draft[+t.dataset.r][+t.dataset.c] = t.value;
-      t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px';
-    });
-    if(t.value.length > 40){ t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
+    t.addEventListener('input', () => { draft[+t.dataset.r][+t.dataset.c] = t.value; tumbuh(t); });
+    tumbuh(t);
   });
   grid.querySelectorAll('.row-del').forEach(b => b.addEventListener('click', () => {
     if(draft.length <= 1) return;
@@ -1531,6 +1613,36 @@ document.getElementById('lamp-add').addEventListener('click', () => {
   draft.push(baris);
   gambarGrid();
   grid.parentElement.scrollTop = grid.parentElement.scrollHeight;
+});
+// impor kegiatan dari file Laporan Diseminasi Informasi (.docx)
+const imporFile = document.getElementById('lamp-impor-file');
+document.getElementById('lamp-impor').addEventListener('click', () => imporFile.click());
+imporFile.addEventListener('change', async () => {
+  const file = imporFile.files[0];
+  imporFile.value = '';
+  if(!file) return;
+  const hint = document.getElementById('lamp-hint');
+  const lamp = files[lampIdx].lamp;
+  try {
+    if(!/\.docx$/i.test(file.name)){
+      hint.textContent = 'file harus .docx (ekspor Word dari aplikasi Laporan Diseminasi)';
+      return;
+    }
+    hint.textContent = 'membaca ' + file.name + ' ...';
+    const zip = await JSZip.loadAsync(file);
+    const doc = zip.file('word/document.xml');
+    if(!doc){ hint.textContent = 'bukan dokumen Word yang valid'; return; }
+    const kegiatan = parseDiseminasi(await doc.async('string'));
+    if(!kegiatan.length){
+      hint.textContent = 'tidak ada kegiatan diseminasi yang terbaca dari file itu';
+      return;
+    }
+    draft = barisDiseminasi(kegiatan, lamp.labels);
+    gambarGrid();
+    hint.textContent = kegiatan.length + ' kegiatan diimpor — periksa isinya lalu tekan SIMPAN';
+  } catch(e){
+    hint.textContent = 'gagal membaca file: ' + (e.message || e);
+  }
 });
 document.getElementById('lamp-reset').addEventListener('click', () => {
   draft = files[lampIdx].lamp.asli.map(r => r.slice());
@@ -1681,7 +1793,8 @@ btn.addEventListener('click', async () => {
 window._skp = { detectSource, transformXml, transformName, lastDay,
   detectTipe, applyVariant, VARIANTS, detectDesa, replaceDesa,
   transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan,
-  findLampiran, applyLampiran, landscapeRange, setCellText };
+  findLampiran, applyLampiran, landscapeRange, setCellText,
+  parseDiseminasi, barisDiseminasi, isTabelDiseminasi };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
