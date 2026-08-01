@@ -1740,17 +1740,23 @@ function setCellText(tc, text){
 }
 
 // tulis data editor ke tabel lampiran (dipanggil SEBELUM transformasi tanggal)
+// tabel bertanggal: jumlah baris ditentukan periode, isi ditimpa per indeks.
+// tabel biasa: jumlah baris mengikuti editor (baris tambahan meniru baris terakhir)
 function applyLampiran(xml, lamp){
   const f = findLampiran(xml);
   if(!f || !lamp || !lamp.rows) return xml;
-  const tbl = xml.slice(f.tblStart, f.tblEnd);
+  const tbl = tulisTabel(xml.slice(f.tblStart, f.tblEnd), f.head, lamp.rows, lamp.dateCols);
+  return xml.slice(0, f.tblStart) + tbl + xml.slice(f.tblEnd);
+}
+
+// ===== penulis tabel & paragraf umum (dipakai integrasi diseminasi) =====
+// susun ulang baris data satu tabel; baris tambahan meniru baris terakhir
+function tulisTabel(tbl, head, rows, autoCols){
   const trMs = [...tbl.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)];
   const trs = trMs.map(m => m[0]);
-  const data = trs.slice(f.head);
-  if(!data.length) return xml;
-  const auto = new Set(lamp.dateCols || []);
-  // isi ulang sel berdasarkan indeks (bukan replace teks) agar sel bernilai
-  // sama persis tidak saling tertukar
+  const data = trs.slice(head);
+  if(!data.length || !rows.length) return tbl;
+  const auto = new Set(autoCols || []);
   const tulis = (tr, vals) => {
     const ms = [...tr.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)];
     let out = '', last = 0;
@@ -1761,15 +1767,181 @@ function applyLampiran(xml, lamp){
     });
     return out + tr.slice(last);
   };
-  // tabel bertanggal: jumlah baris ditentukan periode, isi ditimpa per indeks.
-  // tabel biasa: jumlah baris mengikuti editor (baris tambahan meniru baris terakhir)
   const tpl = data[data.length - 1];
   const baru = auto.size
-    ? data.map((tr, i) => lamp.rows[i] ? tulis(tr, lamp.rows[i]) : tr)
-    : lamp.rows.map((vals, i) => tulis(i < data.length ? data[i] : tpl, vals));
+    ? data.map((tr, i) => rows[i] ? tulis(tr, rows[i]) : tr)
+    : rows.map((vals, i) => tulis(i < data.length ? data[i] : tpl, vals));
   const from = trMs[0].index, to = trMs[trMs.length - 1].index + trs[trs.length - 1].length;
-  const tblBaru = tbl.slice(0, from) + trs.slice(0, f.head).join('') + baru.join('') + tbl.slice(to);
-  return xml.slice(0, f.tblStart) + tblBaru + xml.slice(f.tblEnd);
+  return tbl.slice(0, from) + trs.slice(0, head).join('') + baru.join('') + tbl.slice(to);
+}
+
+// tabel pertama sesudah paragraf berjudul headRe
+function tabelSetelahJudul(xml, headRe){
+  for(const m of xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)){
+    if(!headRe.test(cellText(m[0]))) continue;
+    const s = xml.indexOf('<w:tbl>', m.index);
+    if(s < 0) return null;
+    const e = xml.indexOf('</w:tbl>', s);
+    if(e < 0) return null;
+    const tbl = xml.slice(s, e + 8);
+    const trs = [...tbl.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(q => q[0]);
+    let head = 0;
+    while(head < trs.length && (/<w:tblHeader/.test(trs[head]) || /<w:b\/>|<w:b /.test(trs[head]))) head++;
+    if(head >= trs.length) head = Math.min(1, trs.length - 1);
+    return { start: s, end: e + 8, head };
+  }
+  return null;
+}
+
+function gantiTabelSetelahJudul(xml, headRe, rows){
+  const t = tabelSetelahJudul(xml, headRe);
+  if(!t || !rows.length) return xml;
+  return xml.slice(0, t.start) + tulisTabel(xml.slice(t.start, t.end), t.head, rows) + xml.slice(t.end);
+}
+
+// ganti paragraf-paragraf isi setelah satu judul (jumlah mengikuti texts)
+function gantiParagrafSetelahJudul(xml, headRe, texts, skipFirst){
+  const list = [];
+  for(const m of xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g))
+    list.push({ xml: m[0], at: m.index, text: cellText(m[0]) });
+  const hi = list.findIndex(p => headRe.test(p.text));
+  if(hi < 0) return xml;
+  const edits = [];
+  let ganti = 0, lewat = skipFirst || 0;
+  for(let i = hi + 1; i < list.length && ganti < texts.length; i++){
+    const t = list[i].text;
+    if(!t) continue;
+    if(/^\d+\.\s|^\d+\.\d+\s*[A-Z]|^LAMPIRAN/i.test(t)) break;
+    if(lewat > 0){ lewat--; continue; }
+    edits.push({ at: list[i].at, len: list[i].xml.length, xml: replaceParaText(list[i].xml, texts[ganti]) });
+    ganti++;
+  }
+  edits.sort((a, b) => b.at - a.at)
+    .forEach(e => { xml = xml.slice(0, e.at) + e.xml + xml.slice(e.at + e.len); });
+  return xml;
+}
+
+// ===== INTEGRASI LAPORAN DISEMINASI KE SELURUH ISI LAPORAN =====
+// Dari daftar kegiatan yang diunggah, seluruh bagian Laporan Pelaksanaan
+// Tugas & Fungsi disusun ulang agar sejalan: target, capaian, kesimpulan,
+// saran, permasalahan, upaya pemecahan, dan output.
+function kegiatanDariBaris(rows, labels){
+  const cari = re => labels.findIndex(l => re.test(l));
+  const iTgl = cari(/tanggal|waktu/i), iMat = cari(/materi|kegiatan|uraian/i),
+        iLok = cari(/lokasi|tempat/i), iMet = cari(/metode/i),
+        iPes = cari(/peserta/i), iHas = cari(/hasil|masalah|solusi/i);
+  const ambil = (r, i) => (i >= 0 && r[i] != null) ? String(r[i]).trim() : '';
+  return rows.filter(r => r.some(v => String(v || '').trim())).map(r => {
+    const hasil = ambil(r, iHas);
+    const pm = hasil.match(/Masalah\s*:\s*([\s\S]*?)(?:\s*Solusi\s*:|$)/i);
+    const ps = hasil.match(/Solusi\s*:\s*([\s\S]*)$/i);
+    return { tanggal: ambil(r, iTgl), materi: ambil(r, iMat), lokasi: ambil(r, iLok),
+             metode: ambil(r, iMet), peserta: ambil(r, iPes), hasil,
+             masalah: pm ? pm[1].trim() : '', solusi: ps ? ps[1].trim() : '' };
+  });
+}
+
+const STOP_MATERI = /\b(pendampingan|pengawalan|pelaksanaan|kegiatan|program|sosialisasi|informasi|dan|di|ke|pada)\b/g;
+function kelompokKegiatan(keg){
+  const kunci = m => m.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+    .replace(STOP_MATERI, ' ').replace(/\s+/g, ' ').trim();
+  const grup = [];
+  keg.forEach(k => {
+    const kk = kunci(k.materi);
+    if(!kk) return;
+    const g = grup.find(q => q.kunci === kk || q.kunci.includes(kk) || kk.includes(q.kunci));
+    if(g){ g.item.push(k); if(k.materi.length < g.label.length) g.label = k.materi; }
+    else grup.push({ kunci: kk, label: k.materi, item: [k] });
+  });
+  return grup;
+}
+
+const unikRapi = a => [...new Set(a.map(s => String(s || '').trim()).filter(s => s))];
+const daftarKata = a => a.length <= 1 ? (a[0] || '')
+  : a.slice(0, -1).join(', ') + ' dan ' + a[a.length - 1];
+const awalKecil = s => s ? s.charAt(0).toLowerCase() + s.slice(1) : s;
+const kalimatPertama = s => {
+  const t = String(s || '').trim();
+  const m = t.match(/^[\s\S]{0,140}?[.;]/);
+  return (m ? m[0] : t).replace(/[.;]\s*$/, '').trim();
+};
+
+function integrasiDiseminasi(xml, keg, labelPeriode){
+  keg = keg.filter(k => k.materi || k.tanggal);
+  if(!keg.length) return xml;
+  const N = keg.length;
+  const grup = kelompokKegiatan(keg);
+  const B = labelPeriode;
+
+  // --- 2.1 Target & 2.5 Capaian ---
+  const barisTarget = [['1',
+    'Kegiatan diseminasi informasi pertanian melalui kunjungan lapangan, diskusi, dan pertemuan dengan petani dan pemangku kepentingan',
+    'Jumlah kegiatan diseminasi informasi pertanian terlaksana', String(N), 'Kegiatan']];
+  const barisCapaian = [['1', 'Kegiatan diseminasi informasi pertanian',
+    N + ' kegiatan', N + ' kegiatan', '100%', 'Terlaksana']];
+  if(grup.length > 1) grup.forEach((g, i) => {
+    const no = String(i + 2);
+    barisTarget.push([no, g.label, 'Jumlah kegiatan ' + awalKecil(g.label) + ' terlaksana',
+      String(g.item.length), 'Kegiatan']);
+    barisCapaian.push([no, g.label, g.item.length + ' kegiatan', g.item.length + ' kegiatan',
+      '100%', 'Terlaksana']);
+  });
+  xml = gantiTabelSetelahJudul(xml, /^2\.1\s*Target/i, barisTarget);
+  xml = gantiTabelSetelahJudul(xml, /^2\.5\s*Capaian/i, barisCapaian);
+
+  // --- 4.1 Kesimpulan (3 paragraf, mengikuti gaya laporan) ---
+  const rincian = keg.map((k, i) => '(' + (i + 1) + ') ' + awalKecil(k.materi) +
+    (k.peserta ? ' bersama ' + awalKecil(k.peserta) : '') +
+    (k.lokasi ? ' di ' + k.lokasi : '')).join('; ');
+  const masalahRingkas = unikRapi(keg.map(k => awalKecil(kalimatPertama(k.masalah))));
+  const kesimpulan = [
+    'Pelaksanaan tugas dan fungsi penyuluhan pertanian selama ' + B + ' telah terlaksana sesuai dengan rencana kerja yang ditetapkan, dengan capaian realisasi sebesar 100% untuk seluruh indikator target kegiatan diseminasi informasi pertanian,',
+    'Selama ' + B + ', penyuluh pertanian telah melaksanakan ' + N + ' kegiatan diseminasi informasi pertanian yang mencakup: ' + rincian + ',',
+    masalahRingkas.length
+      ? 'Permasalahan utama yang ditemukan sepanjang periode ini mencakup ' + daftarKata(masalahRingkas) +
+        '. Seluruh permasalahan tersebut telah direspons dengan upaya pemecahan sebagaimana diuraikan pada bagian 5.2.'
+      : 'Seluruh kegiatan terlaksana tanpa hambatan berarti dan terdokumentasi pada lampiran laporan ini.'
+  ];
+  xml = gantiParagrafSetelahJudul(xml, /^4\.1\s*Kesimpulan/i, kesimpulan);
+
+  // --- 4.2 Saran (2 paragraf) ---
+  const solusiAda = unikRapi(keg.map(k => kalimatPertama(k.solusi)));
+  const saran = [
+    solusiAda.length
+      ? 'Upaya ' + awalKecil(solusiAda[0]) + ' perlu terus dilanjutkan dan diintensifkan pada periode berikutnya,'
+      : 'Kegiatan diseminasi informasi pertanian perlu terus dilanjutkan dan diintensifkan pada periode berikutnya,',
+    'Kegiatan ' + daftarKata(grup.map(g => awalKecil(g.label))) +
+      ' perlu dilanjutkan dengan penguatan koordinasi antara BPP Pitu Riawa, dinas terkait, dan kelompok tani agar pelaksanaannya lebih efektif dan datanya lebih akurat.'
+  ];
+  xml = gantiParagrafSetelahJudul(xml, /^4\.2\s*Saran/i, saran);
+
+  // --- 5.1 Permasalahan & 5.2 Upaya (satu baris per kegiatan yang berkendala) ---
+  const berkendala = keg.filter(k => k.masalah);
+  if(berkendala.length){
+    xml = gantiTabelSetelahJudul(xml, /^5\.1\s*Permasalahan/i,
+      berkendala.map((k, i) => [String(i + 1), k.materi, k.masalah, '']));
+    xml = gantiTabelSetelahJudul(xml, /^5\.2\s*Upaya/i,
+      berkendala.map((k, i) => [String(i + 1), kalimatPertama(k.masalah), k.solusi,
+        unikRapi(['Penyuluh Pertanian', k.peserta]).join(', ')]));
+  }
+
+  // --- 5.3 Output ---
+  const output = [['1', 'Kegiatan diseminasi informasi terlaksana',
+    'Diseminasi informasi pertanian mencakup ' + daftarKata(grup.map(g => awalKecil(g.label))),
+    String(N), 'Kegiatan']];
+  if(grup.length > 1) grup.forEach((g, i) => {
+    const metode = unikRapi(g.item.map(k => awalKecil(k.metode)));
+    const lokasi = unikRapi(g.item.map(k => k.lokasi));
+    output.push([String(i + 2), g.label + ' terlaksana',
+      (metode.length ? daftarKata(metode).replace(/^./, c => c.toUpperCase()) + ' ' : '') +
+        awalKecil(g.label) + (lokasi.length ? ' di ' + daftarKata(lokasi) : ''),
+      String(g.item.length), 'Kegiatan']);
+  });
+  output.push([String(output.length + 1), 'Laporan kegiatan',
+    'Laporan tertulis pelaksanaan tugas dan fungsi penyuluhan pertanian ' + B + ' sesuai kaidah karya ilmiah',
+    '1', 'Dokumen laporan']);
+  xml = gantiTabelSetelahJudul(xml, /^5\.3\s*OUTPUT/i, output);
+  return xml;
 }
 
 function transformName(name, src, dst){
@@ -1884,7 +2056,7 @@ function bukaLampiran(i){
   document.getElementById('lamp-hint').textContent = auto
     ? 'kolom tanggal (kuning) mengikuti periode target otomatis — unggahan hanya mengisi kolom lainnya'
     : diseminasi
-      ? 'unggah Laporan Diseminasi (.pdf/.docx) — kegiatannya langsung masuk ke tabel ini'
+      ? 'unggah Laporan Diseminasi (.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
       : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah';
   modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
   gambarGrid();           // saat elemennya sudah punya layout
@@ -2003,7 +2175,15 @@ btn.addEventListener('click', async () => {
     };
     // data lampiran ditulis sebelum transformasi tanggal supaya barisnya masih
     // sejajar dengan tabel yang tampil di editor
-    const olahLampiran = (xml, f) => (f.lamp && f.lamp.edited) ? applyLampiran(xml, f.lamp) : xml;
+    const olahLampiran = (xml, f, labelPeriode) => {
+      if(!f.lamp || !f.lamp.edited) return xml;
+      xml = applyLampiran(xml, f.lamp);
+      // laporan pelaksanaan tugas & fungsi: seluruh isinya diselaraskan
+      // dengan kegiatan diseminasi yang diunggah
+      if(isTabelDiseminasi(f.lamp.labels))
+        xml = integrasiDiseminasi(xml, kegiatanDariBaris(f.lamp.rows, f.lamp.labels), labelPeriode);
+      return xml;
+    };
     const bungkus = async (zip, xml, name) => {
       zip.file('word/document.xml', xml);
       const blob = await zip.generateAsync({ type: 'blob',
@@ -2063,7 +2243,7 @@ btn.addEventListener('click', async () => {
         others.push(ox);
       }
       xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
-      xml = olahLampiran(xml, base); // sebelum digabung: baris masih milik bulan dasar
+      xml = olahLampiran(xml, base, labelTriwulan(q)); // sebelum digabung: baris masih milik bulan dasar
       xml = mergeDailyRows(xml, others);
       await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
         transformNameTriwulan(base.name, base.src, q));
@@ -2078,7 +2258,7 @@ btn.addEventListener('click', async () => {
         setStatus('memproses ' + f.name + ' ...');
         const zip = await JSZip.loadAsync(f.file);
         let xml = await zip.file('word/document.xml').async('string');
-        xml = olahLampiran(olahNarasi(xml, f, dst), f);
+        xml = olahLampiran(olahNarasi(xml, f, dst), f, 'Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year);
         await bungkus(zip, transformXml(xml, f.src, dst), transformName(f.name, f.src, dst));
       }
       zipName = 'Laporan SKP ' + BULAN[dst.mIdx] + ' ' + dst.year + '.zip';
@@ -2106,7 +2286,9 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan,
   findLampiran, applyLampiran, landscapeRange, setCellText,
   parseDiseminasi, barisDiseminasi, isTabelDiseminasi,
-  pdfBaris, tabelDariDocx, tabelDariXlsx, tabelDariCsv, petakanTabel, bacaBerkasLampiran };
+  pdfBaris, tabelDariDocx, tabelDariXlsx, tabelDariCsv, petakanTabel, bacaBerkasLampiran,
+  integrasiDiseminasi, kegiatanDariBaris, kelompokKegiatan, tabelSetelahJudul,
+  gantiTabelSetelahJudul, gantiParagrafSetelahJudul, tulisTabel };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
