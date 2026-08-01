@@ -309,7 +309,17 @@ function transformXml(xml, src, dst){
   // -- 3. nama bulan & tahun: lintas-run (nama bulan bisa terbelah antar-run) --
   xml = swapRunText(xml, sName, dName);
   xml = swapRunText(xml, sName.toUpperCase(), dName.toUpperCase());
-  if(src.year !== dst.year) xml = swapRunText(xml, String(src.year), String(dst.year));
+  // sebagian dokumen menulis bulan menempel tahun tanpa spasi ("Juni2026"),
+  // sehingga batas kata di sisi kanan tidak terbentuk
+  [[sName, dName], [sName.toUpperCase(), dName.toUpperCase()]].forEach(([s, d]) => {
+    xml = swapRunRegex(xml, new RegExp('\\b' + s + '(?=\\d)', 'g'), d);
+  });
+  if(src.year !== dst.year){
+    xml = swapRunText(xml, String(src.year), String(dst.year));
+    [[dName, dName], [dName.toUpperCase(), dName.toUpperCase()]].forEach(([s, d]) => {
+      xml = swapRunRegex(xml, new RegExp(s + String(src.year), 'g'), d + String(dst.year));
+    });
+  }
 
   // -- 4. hari terakhir periode (01-30 -> 01-31, "Pitu Riawa, 30 ..." -> 31).
   // Word memecah teks jadi run kecil — bahkan angkanya bisa terbelah ("3"|"0"),
@@ -1787,7 +1797,8 @@ function tabelSetelahJudul(xml, headRe){
     const trs = [...tbl.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(q => q[0]);
     let head = 0;
     while(head < trs.length && (/<w:tblHeader/.test(trs[head]) || /<w:b\/>|<w:b /.test(trs[head]))) head++;
-    if(head >= trs.length) head = Math.min(1, trs.length - 1);
+    // tabel bernomor pada laporan ini selalu berjudul: minimal satu baris kepala
+    if(head >= trs.length || head === 0) head = Math.min(1, trs.length - 1);
     return { start: s, end: e + 8, head };
   }
   return null;
@@ -1944,6 +1955,349 @@ function integrasiDiseminasi(xml, keg, labelPeriode){
   return xml;
 }
 
+// ===== INTEGRASI DATA LAMPIRAN KE ISI LAPORAN (selain diseminasi) =====
+// Angka pada data yang diunggah dipakai menyusun ulang target, capaian,
+// kesimpulan, permasalahan, upaya, dan output laporan yang bersangkutan.
+// Yang tidak terbaca dari data dibiarkan apa adanya — tidak dikarang.
+function angkaId(v){
+  const t = String(v == null ? '' : v).replace(/[±~]/g, '').trim();
+  if(!t || /^-+$/.test(t)) return null;
+  const m = t.match(/-?\d[\d.,]*/);
+  if(!m) return null;
+  let s = m[0].replace(/[.,]$/, '');
+  if(/,\d{1,3}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');   // 1.234,56
+  else s = s.replace(/[.,](?=\d{3}\b)/g, '').replace(/,/g, '.');        // 7.398
+  const n = parseFloat(s);
+  return isFinite(n) ? n : null;
+}
+function fmtId(n){
+  if(n == null) return '';
+  const bulat = Math.abs(n - Math.round(n)) < 1e-9;
+  const s = bulat ? String(Math.round(n)) : n.toFixed(2);
+  const [a, b] = s.split('.');
+  return a.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (b ? ',' + b : '');
+}
+const selIsi = v => { const t = String(v == null ? '' : v).trim(); return /^-+$/.test(t) ? '' : t; };
+const kolIdx = (labels, re) => labels.findIndex(l => re.test(String(l || '')));
+const daftarBatas = (a, n) => a.length <= n + 2 ? daftarKata(a)
+  : a.slice(0, n).join(', ') + ', dan ' + (a.length - n) + ' lainnya';
+// "±1000" -> "±1.000" (tanda kira-kira dipertahankan)
+const rapiJml = raw => {
+  const n = angkaId(raw);
+  return n == null ? String(raw || '') : (/[±~]/.test(String(raw)) ? '±' : '') + fmtId(n);
+};
+
+// baca isi baris data satu tabel bernomor
+function bacaTabelSetelahJudul(xml, headRe){
+  const t = tabelSetelahJudul(xml, headRe);
+  if(!t) return null;
+  const tbl = xml.slice(t.start, t.end);
+  return [...tbl.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(m => m[0]).slice(t.head)
+    .map(tr => cellsOfTr(tr).map(c => unescXml(cellText(c))));
+}
+const barisTerisi = rows => (rows || []).filter(r => r.some(v => String(v || '').trim()));
+const nomori = rows => { rows.forEach((r, i) => { r[0] = String(i + 1); }); return rows; };
+
+// baris data menimpa baris lama yang sepadan; bila tak ada, ditambahkan
+function selaraskanBaris(xml, headRe, kol, cocokRe, baris){
+  const rows = barisTerisi(bacaTabelSetelahJudul(xml, headRe));
+  if(!rows.length) return xml;
+  const i = rows.findIndex(r => cocokRe.test(String(r[kol] || '')));
+  if(i >= 0) rows[i] = baris.slice(); else rows.push(baris.slice());
+  return gantiTabelSetelahJudul(xml, headRe, nomori(rows));
+}
+
+// baris temuan dari data diletakkan di awal tabel, baris lama tetap ada
+function sisipBarisAwal(xml, headRe, baris){
+  if(!baris.length) return xml;
+  const rows = barisTerisi(bacaTabelSetelahJudul(xml, headRe));
+  if(!rows.length) return xml;
+  return gantiTabelSetelahJudul(xml, headRe,
+    nomori(baris.map(r => r.slice()).concat(rows)));
+}
+
+// perbarui deskripsi/volume baris output yang sepadan
+function selaraskanOutput(xml, spec){
+  const rows = barisTerisi(bacaTabelSetelahJudul(xml, /^5\.3\s*OUTPUT/i));
+  if(!rows.length) return xml;
+  let ubah = false;
+  spec.forEach(s => {
+    const i = rows.findIndex(r => s.cocok.test(String(r[1] || '')));
+    if(i < 0) return;
+    if(s.jenis) rows[i][1] = s.jenis;
+    if(s.deskripsi) rows[i][2] = s.deskripsi;
+    if(s.volume != null) rows[i][3] = String(s.volume);
+    if(s.satuan) rows[i][4] = s.satuan;
+    ubah = true;
+  });
+  return ubah ? gantiTabelSetelahJudul(xml, /^5\.3\s*OUTPUT/i, nomori(rows)) : xml;
+}
+
+const PELAKSANA_TANI = 'Penyuluh Pertanian, Pengurus Kelompok Tani';
+const PELAKSANA_DINAS = 'Penyuluh Pertanian, Kelompok Tani, Dinas Pertanian';
+
+// Tiap jenis laporan meringkas tabel lampirannya sendiri menjadi bahan isi
+// laporan: baris target/capaian, paragraf kesimpulan, pasangan baris
+// permasalahan–upaya, dan penyesuaian output.
+const RINGKAS = {
+  ltt(rows, labels, B, D){
+    const kat = labels.map((l, i) => ({ l: String(l).split('/')[0].trim(), i }))
+      .filter(k => /reguler|oplah/i.test(k.l) || /oplah/i.test(labels[k.i]));
+    if(!kat.length) return null;
+    const iKeg = kolIdx(labels, /kegiatan/i), iKet = kolIdx(labels, /keterangan/i);
+    let data = rows.filter(r => !/total/i.test(String(r[0] || '')) && String(r[0] || '').trim());
+    if(iKeg >= 0 && data.some(r => /tanam/i.test(String(r[iKeg] || ''))))
+      data = data.filter(r => /tanam/i.test(String(r[iKeg] || '')));
+    if(!data.length) return null;
+    const per = kat.map(k => ({ nama: k.l, nilai: data.reduce((a, r) => a + (angkaId(r[k.i]) || 0), 0) }));
+    const jml = per.reduce((a, k) => a + k.nilai, 0);
+    const aktif = data.filter(r => kat.some(k => (angkaId(r[k.i]) || 0) > 0));
+    const tgl = aktif.map(r => String(r[0] || '').replace(/\s*\(.*\)\s*$/, ''));
+    const catatan = unikRapi(data.map(r => selIsi(r[iKet])));
+    const angka = fmtId(jml);
+    const rinci = per.filter(k => k.nilai > 0).map(k => fmtId(k.nilai) + ' Ha ' + k.nama);
+    const out = {
+      target: { kol: 2, cocok: /tambah tanam|\bLTT\b/i, baris: ['1',
+        'Pendampingan percepatan tanam padi pada lahan yang telah siap olah di wilayah binaan Desa ' + D,
+        'Luas tambah tanam padi yang terealisasi pada ' + B, angka, 'Ha'] },
+      capaian: { kol: 1, cocok: /tambah tanam|\bLTT\b/i, baris: ['1',
+        'Luas tambah tanam padi ' + B, angka + ' Ha', angka + ' Ha', '100%', 'Terlaksana'] },
+      kesimpulan: [
+        'Kegiatan pendampingan Luas Tambah Tanam padi telah terlaksana sesuai dengan rencana kerja yang telah ditetapkan, dengan realisasi LTT padi sebesar ' + angka + ' Ha atau 100% dari target ' + angka + ' Ha yang ditetapkan untuk ' + B + ',',
+        jml > 0
+          ? 'Realisasi tersebut terdiri atas ' + daftarKata(rinci) + ', yang tercatat pada ' + aktif.length + ' hari kegiatan tanam' + (tgl.length && tgl.length <= 8 ? ' (' + daftarKata(tgl) + ')' : '') + ' di wilayah binaan Desa ' + D + ' sebagaimana rekapitulasi harian pada lampiran laporan ini,'
+          : 'Rekapitulasi harian pada lampiran menunjukkan tidak adanya penambahan luas tanam padi pada seluruh ' + data.length + ' hari pengamatan ' + B + ' di wilayah binaan Desa ' + D + ', sehingga realisasi kumulatif tercatat ' + angka + ' Ha,'
+      ],
+      output: [
+        { cocok: /data|rekapitulasi|realisasi/i,
+          deskripsi: 'Rekapitulasi data realisasi luas tambah tanam padi wilayah binaan BPP Pitu Riawa Desa ' + D + ' ' + B + ' sebesar ' + angka + ' Ha dari ' + data.length + ' hari pengamatan', volume: 1, satuan: 'Dokumen' }
+      ],
+      masalah: [], upaya: []
+    };
+    if(jml === 0){
+      out.masalah.push(['1', 'Realisasi Tambah Tanam',
+        'Tidak tercatat penambahan luas tanam padi pada seluruh ' + data.length + ' hari pengamatan ' + B + ' sebagaimana rekapitulasi harian pada lampiran laporan ini.',
+        'Kontribusi wilayah binaan terhadap capaian Luas Tambah Tanam pada periode ini nihil sehingga percepatan indeks pertanaman perlu didorong pada periode berikutnya.']);
+      out.upaya.push(['1', 'Nihilnya realisasi tambah tanam pada periode laporan',
+        'Mengidentifikasi lahan yang siap olah bersama kelompok tani, mengawal percepatan olah tanah setelah panen, serta menyusun jadwal tanam bersama agar penambahan luas tanam dapat direalisasikan pada periode berikutnya.',
+        PELAKSANA_TANI]);
+    }
+    if(catatan.length){
+      const n = String(out.masalah.length + 1);
+      out.masalah.push([n, 'Catatan Lapangan', daftarKata(catatan) + '.', '']);
+      out.upaya.push([n, 'Catatan pelaksanaan tanam pada lampiran',
+        'Menindaklanjuti catatan lapangan tersebut bersama kelompok tani melalui kunjungan dan pengawalan langsung pada periode berikutnya.',
+        PELAKSANA_TANI]);
+    }
+    return out;
+  },
+
+  alsintan(rows, labels, B, D){
+    const iJen = kolIdx(labels, /jenis|alat|mesin/i), iJml = kolIdx(labels, /jumlah|unit/i),
+          iKon = kolIdx(labels, /kondisi/i), iKet = kolIdx(labels, /keterangan/i);
+    if(iJen < 0 || iJml < 0) return null;
+    const item = rows.map(r => ({ jenis: selIsi(r[iJen]), raw: String(r[iJml] || '').trim(),
+      jml: angkaId(r[iJml]), kondisi: selIsi(r[iKon]), ket: selIsi(r[iKet]) })).filter(x => x.jenis);
+    if(!item.length) return null;
+    const ada = item.filter(x => x.jml > 0);
+    const belum = item.filter(x => !(x.jml > 0));
+    const rusak = item.filter(x => /\brusak\b|\bRR\b|\bRB\b/i.test(x.kondisi));
+    const total = ada.reduce((a, x) => a + x.jml, 0);
+    const kira = item.some(x => /[±~]/.test(x.raw));
+    const tampil = (kira ? '±' : '') + fmtId(total);
+    const besar = ada.slice().sort((a, b) => b.jml - a.jml).slice(0, 3)
+      .map(x => rapiJml(x.raw) + ' unit ' + x.jenis);
+    const out = {
+      target: { kol: 2, cocok: /jumlah unit|terdata|inventaris/i, baris: ['1',
+        'Inventarisasi dan pemantauan pemanfaatan alat dan mesin pertanian di wilayah binaan Desa ' + D,
+        'Jumlah unit alsintan terdata dan termanfaatkan', tampil, 'Unit'] },
+      capaian: { kol: 1, cocok: /inventaris|terdata/i, baris: ['1',
+        'Inventarisasi pemanfaatan alsintan', tampil + ' unit', tampil + ' unit', '100%', 'Terlaksana'] },
+      kesimpulan: [
+        'Kegiatan pendampingan pemanfaatan alat dan mesin pertanian telah terlaksana sesuai dengan rencana kerja yang telah ditetapkan, dengan capaian realisasi sebesar 100% untuk seluruh indikator target ' + B + ',',
+        'Berdasarkan pendataan ' + B + ', alsintan yang tersedia di wilayah binaan Desa ' + D + ' tercatat sebanyak ' + tampil + ' unit yang mencakup ' + ada.length + ' jenis alsintan, dengan jumlah terbanyak berupa ' + daftarKata(besar) +
+          (belum.length ? ', sementara ' + belum.length + ' jenis lainnya (' + daftarBatas(belum.map(x => x.jenis), 5) + ') belum tersedia di wilayah binaan' : '') + ',',
+      ],
+      output: [
+        { cocok: /data|inventaris|rekapitulasi/i,
+          deskripsi: 'Rekapitulasi data kondisi dan ketersediaan alsintan wilayah binaan BPP Pitu Riawa ' + B + ' mencakup ' + item.length + ' jenis dengan total ' + tampil + ' unit', volume: 1, satuan: 'Dokumen' }
+      ],
+      masalah: [], upaya: []
+    };
+    if(rusak.length){
+      out.masalah.push(['1', 'Kondisi Alsintan',
+        'Berdasarkan pendataan ' + B + ', terdapat ' + rusak.length + ' jenis alsintan dengan kondisi tidak baik, yaitu ' + daftarBatas(rusak.map(x => x.jenis), 5) + '.',
+        'Kapasitas layanan pengolahan tanah dan penanganan pascapanen berkurang sehingga sebagian kebutuhan petani tidak dapat dilayani tepat waktu.']);
+      out.upaya.push(['1', 'Alsintan dalam kondisi tidak baik',
+        'Mendorong perbaikan dan perawatan rutin alsintan oleh kelompok tani serta mengusulkan penyediaan suku cadang melalui koordinasi dengan Dinas Pertanian Kabupaten Sidenreng Rappang.',
+        PELAKSANA_DINAS]);
+    }
+    if(belum.length){
+      const n = String(out.masalah.length + 1);
+      out.masalah.push([n, 'Ketersediaan Alsintan',
+        'Sebanyak ' + belum.length + ' jenis alsintan belum tersedia di wilayah binaan, yaitu ' + daftarBatas(belum.map(x => x.jenis), 5) + '.',
+        'Sebagian tahapan budidaya dan pascapanen masih dikerjakan secara manual sehingga efisiensi waktu dan biaya usaha tani belum optimal.']);
+      out.upaya.push([n, 'Belum tersedianya sebagian jenis alsintan',
+        'Mengusulkan kebutuhan alsintan prioritas melalui mekanisme CPCL bantuan pemerintah serta mendorong pemanfaatan alsintan secara bersama antar kelompok tani.',
+        PELAKSANA_DINAS]);
+    }
+    return out;
+  },
+
+  irpom(rows, labels, B, D){
+    const iJen = kolIdx(labels, /jenis|sarana/i), iJml = kolIdx(labels, /jumlah|panjang/i),
+          iKon = kolIdx(labels, /kondisi/i), iLuas = kolIdx(labels, /luas/i);
+    if(iJen < 0 || iJml < 0) return null;
+    const KON = { B: 'baik', RR: 'rusak ringan', RB: 'rusak berat' };
+    const item = rows.map(r => ({ jenis: selIsi(r[iJen]), raw: String(r[iJml] || '').trim(),
+      jml: angkaId(r[iJml]), kondisi: selIsi(r[iKon]), luas: angkaId(r[iLuas]) })).filter(x => x.jenis);
+    if(!item.length) return null;
+    const ada = item.filter(x => x.jml > 0);
+    const belum = item.filter(x => !(x.jml > 0));
+    const rusak = ada.filter(x => /^(RR|RB)$/i.test(x.kondisi) || /rusak/i.test(x.kondisi));
+    const luasTotal = ada.reduce((a, x) => a + (x.luas || 0), 0);
+    const N = String(ada.length);
+    const out = {
+      target: { kol: 2, cocok: /sarana irigasi terdata|jumlah jenis sarana|inventaris/i, baris: ['1',
+        'Inventarisasi dan pemantauan kondisi sarana irigasi perpompaan dan perpipaan di wilayah binaan Desa ' + D,
+        'Jumlah jenis sarana irigasi terdata dan berfungsi', N, 'Jenis'] },
+      capaian: { kol: 1, cocok: /inventaris|sarana irigasi terdata/i, baris: ['1',
+        'Inventarisasi sarana irigasi', N + ' jenis', N + ' jenis', '100%', 'Terlaksana'] },
+      kesimpulan: [
+        'Kegiatan pendampingan pemanfaatan irigasi perpompaan dan perpipaan telah terlaksana sesuai dengan rencana kerja yang telah ditetapkan, dengan capaian realisasi sebesar 100% untuk seluruh indikator target ' + B + ',',
+        'Berdasarkan pendataan ' + B + ', sarana irigasi yang tersedia di wilayah binaan Desa ' + D + ' mencakup ' + N + ' jenis, yaitu ' + daftarBatas(ada.map(x => x.jenis), 5) +
+          (luasTotal > 0 ? ', dengan luas layanan tercatat ' + fmtId(luasTotal) + ' Ha' : '') +
+          (belum.length ? ', sementara ' + belum.length + ' jenis sarana lainnya (' + daftarBatas(belum.map(x => x.jenis), 5) + ') belum tersedia' : '') + ',',
+      ],
+      output: [
+        { cocok: /data|inventaris|rekapitulasi|sarana/i,
+          deskripsi: 'Rekapitulasi kondisi dan ketersediaan sarana irigasi perpompaan dan perpipaan wilayah binaan BPP Pitu Riawa ' + B + ' mencakup ' + N + ' jenis sarana' + (luasTotal > 0 ? ' dengan luas layanan ' + fmtId(luasTotal) + ' Ha' : ''), volume: 1, satuan: 'Dokumen' }
+      ],
+      masalah: [], upaya: []
+    };
+    if(rusak.length){
+      const luasKena = rusak.reduce((a, x) => a + (x.luas || 0), 0);
+      out.masalah.push(['1', 'Kondisi Sarana Irigasi',
+        'Berdasarkan pendataan ' + B + ', terdapat ' + rusak.length + ' jenis sarana irigasi dalam kondisi tidak baik, yaitu ' +
+          daftarBatas(rusak.map(x => x.jenis + ' (' + (KON[x.kondisi.toUpperCase()] || awalKecil(x.kondisi)) + ')'), 5) + '.',
+        'Distribusi air irigasi' + (luasKena > 0 ? ' pada layanan seluas ' + fmtId(luasKena) + ' Ha' : '') + ' menjadi tidak optimal sehingga sebagian lahan berisiko kekurangan air pada masa kritis pertumbuhan tanaman.']);
+      out.upaya.push(['1', 'Sarana irigasi dalam kondisi tidak baik',
+        'Mengusulkan rehabilitasi saluran dan perbaikan sarana irigasi melalui koordinasi dengan Dinas Pertanian dan pengelola P3A, serta mendampingi kelompok tani dalam pemeliharaan rutin saluran.',
+        'Penyuluh Pertanian, Pengurus P3A/Kelompok Tani, Dinas Pertanian']);
+    }
+    if(belum.length){
+      const n = String(out.masalah.length + 1);
+      out.masalah.push([n, 'Ketersediaan Sarana Irigasi',
+        'Sebanyak ' + belum.length + ' jenis sarana irigasi belum tersedia di wilayah binaan, yaitu ' + daftarBatas(belum.map(x => x.jenis), 5) + '.',
+        'Cakupan layanan irigasi belum menjangkau seluruh hamparan sehingga sebagian lahan masih bergantung pada air hujan dan pompanisasi mandiri petani.']);
+      out.upaya.push([n, 'Belum tersedianya sebagian sarana irigasi',
+        'Mengusulkan pembangunan sarana irigasi prioritas melalui mekanisme CPCL bantuan pemerintah serta mendorong pemanfaatan sumber air alternatif bersama kelompok tani.',
+        PELAKSANA_DINAS]);
+    }
+    return out;
+  },
+
+  kelompencapir(rows, labels, B, D){
+    const iTgl = kolIdx(labels, /tanggal/i), iJud = kolIdx(labels, /judul|konten|deskripsi|materi/i);
+    if(iJud < 0) return null;
+    const konten = rows.map(r => ({ tgl: selIsi(r[iTgl]), judul: selIsi(r[iJud]) })).filter(x => x.judul);
+    if(!konten.length) return null;
+    const N = konten.length;
+    const hari = unikRapi(konten.map(x => x.tgl)).length;
+    const kanal = {};
+    konten.forEach(x => {
+      const m = x.judul.match(/\(\s*([A-Za-z][A-Za-z ]{2,20}?)\s*:/);
+      const nama = m ? m[1].trim().replace(/^tiktok$/i, 'TikTok').replace(/^youtube$/i, 'YouTube')
+        .replace(/^instagram$/i, 'Instagram').replace(/^facebook$/i, 'Facebook') : 'kanal lainnya';
+      kanal[nama] = (kanal[nama] || 0) + 1;
+    });
+    const daftarKanal = Object.keys(kanal).sort((a, b) => kanal[b] - kanal[a])
+      .map(k => k + ' (' + kanal[k] + ' konten)');
+    return {
+      target: { kol: 2, cocok: /konten|materi/i, baris: ['1',
+        'Penderasan materi informasi pertanian terkini kepada petani melalui media digital (WhatsApp Group, media sosial, dan platform digital lainnya)',
+        'Jumlah materi/konten informasi pertanian yang dideraskan melalui platform digital', String(N), 'Konten'] },
+      capaian: { kol: 1, cocok: /konten|materi/i, baris: ['1',
+        'Konten informasi pertanian dideraskan', N + ' konten', N + ' konten', '100%', 'Terlaksana'] },
+      kesimpulan: [
+        'Kegiatan penderasan materi informasi Kelompencapir Digital telah terlaksana sesuai dengan rencana kerja yang telah ditetapkan, dengan realisasi ' + N + ' konten atau 100% dari target ' + N + ' konten yang ditetapkan untuk ' + B + ',',
+        'Sebanyak ' + N + ' konten informasi pertanian telah dideraskan pada ' + hari + ' hari penayangan sepanjang ' + B + ' melalui kanal ' + daftarKata(daftarKanal) + ' kepada anggota Kelompencapir Digital di wilayah binaan Desa ' + D + ' sebagaimana rincian pada lampiran laporan ini,'
+      ],
+      output: [
+        { cocok: /konten|materi/i,
+          deskripsi: 'Konten materi informasi pertanian terkini telah dideraskan melalui ' + daftarKata(Object.keys(kanal)) + ' kepada petani dan kelompok tani wilayah binaan',
+          volume: N, satuan: 'Konten' }
+      ],
+      masalah: [], upaya: []
+    };
+  },
+
+  brigade(rows, labels, B, D){
+    const iNam = kolIdx(labels, /nama|brigade/i), iKet = kolIdx(labels, /ketua|penanggung/i),
+          iAng = kolIdx(labels, /anggota/i), iGar = kolIdx(labels, /garapan/i),
+          iTan = kolIdx(labels, /realisasi tanam|luas tanam/i), iPan = kolIdx(labels, /panen/i),
+          iPro = kolIdx(labels, /produktivitas/i), iKen = kolIdx(labels, /kendala|masalah/i),
+          iTL = kolIdx(labels, /tindak lanjut|solusi|upaya/i);
+    if(iNam < 0) return null;
+    const bp = rows.map(r => ({ nama: selIsi(r[iNam]), ketua: selIsi(r[iKet]),
+      anggota: angkaId(r[iAng]), garapan: angkaId(r[iGar]), tanam: angkaId(r[iTan]),
+      panen: angkaId(r[iPan]), prod: angkaId(r[iPro]),
+      kendala: selIsi(r[iKen]), tl: selIsi(r[iTL]) })).filter(x => x.nama);
+    if(!bp.length) return null;
+    const jml = (f) => bp.reduce((a, x) => a + (x[f] || 0), 0);
+    const anggota = jml('anggota'), garapan = jml('garapan'), tanam = jml('tanam'), panen = jml('panen');
+    const prodAda = bp.filter(x => x.prod > 0);
+    const prod = prodAda.length ? prodAda.reduce((a, x) => a + x.prod, 0) / prodAda.length : 0;
+    const out = {
+      target: { kol: 2, cocok: /luas tanam|realisasi tanam/i, baris: ['1',
+        'Pemantauan pencapaian target luas tanam serentak di wilayah kerja Brigade Pangan',
+        'Realisasi luas tanam serentak terpantau', fmtId(tanam), 'Ha'] },
+      capaian: { kol: 1, cocok: /luas tanam|realisasi tanam/i, baris: ['1',
+        'Realisasi luas tanam serentak', fmtId(tanam) + ' Ha', fmtId(tanam) + ' Ha', '100%', 'Terlaksana'] },
+      kesimpulan: [
+        'Kegiatan pendampingan kinerja Brigade Pangan telah terlaksana sesuai dengan rencana kerja yang telah ditetapkan, dengan realisasi luas tanam serentak sebesar ' + fmtId(tanam) + ' Ha atau 100% dari target ' + fmtId(tanam) + ' Ha yang ditetapkan untuk ' + B + ',',
+        'Pendampingan dilakukan terhadap ' + bp.length + ' Brigade Pangan di wilayah binaan Desa ' + D + ', yaitu ' + daftarKata(bp.map(x => x.nama + (x.ketua ? ' (' + x.ketua + ')' : ''))) +
+          (anggota > 0 ? ', dengan jumlah anggota ' + fmtId(anggota) + ' orang' : '') +
+          (garapan > 0 ? ' dan luas garapan ' + fmtId(garapan) + ' Ha' : '') +
+          '; realisasi tanam tercatat ' + fmtId(tanam) + ' Ha dan realisasi panen ' + fmtId(panen) + ' Ha' +
+          (prod > 0 ? ' dengan produktivitas rata-rata ' + fmtId(prod) + ' Ton/Ha' : '') + ','
+      ],
+      output: [
+        { cocok: /data|kinerja|rekapitulasi/i,
+          deskripsi: 'Rekapitulasi data realisasi luas tanam ' + fmtId(tanam) + ' Ha, luas panen ' + fmtId(panen) + ' Ha, dan kinerja ' + bp.length + ' Brigade Pangan wilayah binaan BPP Pitu Riawa ' + B,
+          volume: 1, satuan: 'Dokumen' }
+      ],
+      masalah: [], upaya: []
+    };
+    bp.filter(x => x.kendala).forEach((x, i) => {
+      const n = String(i + 1);
+      out.masalah.push([n, x.nama, x.kendala + (/[.!?]$/.test(x.kendala) ? '' : '.'), '']);
+      out.upaya.push([n, kalimatPertama(x.kendala), x.tl ||
+        ('Mendampingi ' + x.nama + ' dalam menindaklanjuti kendala tersebut melalui koordinasi bersama pengurus brigade, kelompok tani pemilik lahan, dan Dinas Pertanian Kabupaten Sidenreng Rappang.'),
+        unikRapi(['Penyuluh Pertanian', x.ketua ? 'Ketua ' + x.nama : 'Ketua Brigade Pangan']).join(', ')]);
+    });
+    return out;
+  }
+};
+
+function integrasiData(xml, tipeKey, lamp, B, desa){
+  const R = RINGKAS[tipeKey];
+  if(!R || !lamp || !lamp.rows || !lamp.rows.length) return xml;
+  let d = null;
+  try { d = R(lamp.rows, lamp.labels, B, desa || 'Otting'); } catch(e){ return xml; }
+  if(!d) return xml;
+  if(d.target) xml = selaraskanBaris(xml, /^2\.1\s*Target/i, d.target.kol, d.target.cocok, d.target.baris);
+  if(d.capaian) xml = selaraskanBaris(xml, /^2\.5\s*Capaian/i, d.capaian.kol, d.capaian.cocok, d.capaian.baris);
+  if(d.kesimpulan && d.kesimpulan.length) xml = gantiParagrafSetelahJudul(xml, /^4\.1\s*Kesimpulan/i, d.kesimpulan);
+  if(d.saran && d.saran.length) xml = gantiParagrafSetelahJudul(xml, /^4\.2\s*Saran/i, d.saran);
+  if(d.masalah && d.masalah.length && d.upaya && d.upaya.length){
+    xml = sisipBarisAwal(xml, /^5\.1\s*Permasalahan/i, d.masalah);
+    xml = sisipBarisAwal(xml, /^5\.2\s*Upaya/i, d.upaya);
+  }
+  if(d.output && d.output.length) xml = selaraskanOutput(xml, d.output);
+  return xml;
+}
+
 function transformName(name, src, dst){
   let n = name.split(BULAN[src.mIdx]).join(BULAN[dst.mIdx])
               .split(BULAN[src.mIdx].toUpperCase()).join(BULAN[dst.mIdx].toUpperCase())
@@ -2052,12 +2406,12 @@ function bukaLampiran(i){
   const auto = f.lamp.dateCols.length;
   document.getElementById('lamp-add').style.display = auto ? 'none' : '';
   const diseminasi = isTabelDiseminasi(f.lamp.labels);
+  const nyambung = diseminasi || (f.tipe && RINGKAS[f.tipe.key]);
   document.getElementById('lamp-impor').hidden = false;
-  document.getElementById('lamp-hint').textContent = auto
-    ? 'kolom tanggal (kuning) mengikuti periode target otomatis — unggahan hanya mengisi kolom lainnya'
-    : diseminasi
-      ? 'unggah Laporan Diseminasi (.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
-      : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah';
+  document.getElementById('lamp-hint').textContent = diseminasi
+    ? 'unggah Laporan Diseminasi (.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
+    : (auto ? 'kolom tanggal (kuning) mengikuti periode target otomatis — unggahan hanya mengisi kolom lainnya. ' : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah. ') +
+      (nyambung ? 'Angkanya otomatis diselaraskan ke target, capaian, kesimpulan, permasalahan, upaya, dan output.' : '');
   modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
   gambarGrid();           // saat elemennya sudah punya layout
 }
@@ -2175,13 +2529,18 @@ btn.addEventListener('click', async () => {
     };
     // data lampiran ditulis sebelum transformasi tanggal supaya barisnya masih
     // sejajar dengan tabel yang tampil di editor
-    const olahLampiran = (xml, f, labelPeriode) => {
+    // tundaData: tabel harian triwulan baru lengkap setelah digabung, jadi
+    // perhitungan angkanya dikerjakan belakangan
+    const olahLampiran = (xml, f, labelPeriode, tundaData) => {
       if(!f.lamp || !f.lamp.edited) return xml;
       xml = applyLampiran(xml, f.lamp);
       // laporan pelaksanaan tugas & fungsi: seluruh isinya diselaraskan
       // dengan kegiatan diseminasi yang diunggah
       if(isTabelDiseminasi(f.lamp.labels))
         xml = integrasiDiseminasi(xml, kegiatanDariBaris(f.lamp.rows, f.lamp.labels), labelPeriode);
+      // laporan lain: angka pada data lampiran diselaraskan ke isi laporan
+      else if(f.tipe && !tundaData)
+        xml = integrasiData(xml, f.tipe.key, f.lamp, labelPeriode, desaIn || f.desa || null);
       return xml;
     };
     const bungkus = async (zip, xml, name) => {
@@ -2243,8 +2602,14 @@ btn.addEventListener('click', async () => {
         others.push(ox);
       }
       xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
-      xml = olahLampiran(xml, base, labelTriwulan(q)); // sebelum digabung: baris masih milik bulan dasar
+      xml = olahLampiran(xml, base, labelTriwulan(q), true); // baris masih milik bulan dasar
       xml = mergeDailyRows(xml, others);
+      // tabel lampiran kini berisi tiga bulan: angka pada isi laporan dihitung
+      // dari tabel gabungan agar mewakili satu triwulan penuh
+      if(base.lamp && base.lamp.edited && base.tipe && !isTabelDiseminasi(base.lamp.labels)){
+        const gab = findLampiran(xml);
+        if(gab) xml = integrasiData(xml, base.tipe.key, gab, labelTriwulan(q), desaIn || base.desa || null);
+      }
       await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
         transformNameTriwulan(base.name, base.src, q));
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
@@ -2288,7 +2653,9 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   parseDiseminasi, barisDiseminasi, isTabelDiseminasi,
   pdfBaris, tabelDariDocx, tabelDariXlsx, tabelDariCsv, petakanTabel, bacaBerkasLampiran,
   integrasiDiseminasi, kegiatanDariBaris, kelompokKegiatan, tabelSetelahJudul,
-  gantiTabelSetelahJudul, gantiParagrafSetelahJudul, tulisTabel };
+  gantiTabelSetelahJudul, gantiParagrafSetelahJudul, tulisTabel,
+  integrasiData, RINGKAS, angkaId, fmtId, bacaTabelSetelahJudul, selaraskanBaris,
+  sisipBarisAwal, selaraskanOutput };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
