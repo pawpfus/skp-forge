@@ -193,8 +193,8 @@
     </div>
     <div class="lamp-grid-wrap"><table id="lamp-grid"></table></div>
     <div class="lamp-foot">
-      <button id="lamp-impor" hidden>&#8681; IMPOR LAPORAN DISEMINASI</button>
-      <input type="file" id="lamp-impor-file" accept=".docx" style="display:none">
+      <button id="lamp-impor">&#8681; UNGGAH DATA LAMPIRAN</button>
+      <input type="file" id="lamp-impor-file" accept=".pdf,.docx,.xlsx,.csv" style="display:none">
       <button id="lamp-add">+ BARIS</button>
       <button id="lamp-reset">KEMBALIKAN ASLI</button>
       <span class="lamp-hint" id="lamp-hint"></span>
@@ -1335,6 +1335,185 @@ function findLampiran(xml){
            tblStart: rg.start + tm.index, tblEnd: rg.start + tm.index + tm[0].length };
 }
 
+// ===== BACA TEKS PDF (hasil ekspor Word) =====
+// Teks PDF Word tersimpan sebagai string literal pada operator Tj/TJ, jadi
+// bisa dibaca tanpa pustaka besar: stream di-inflate, penggal teks dipungut
+// beserta koordinatnya, lalu dirakit kembali menjadi baris.
+const WINANSI = { 0x91:'‘', 0x92:'’', 0x93:'“', 0x94:'”',
+  0x95:'•', 0x96:'–', 0x97:'—', 0xA0:' ', 0xB0:'°' };
+// taksiran lebar huruf (kelipatan ukuran font) untuk menebak jarak antarpenggal
+const LEBAR = c => {
+  if('iljt.,;:\'!|[]() '.includes(c)) return 0.28;
+  if('mwMW@'.includes(c)) return 0.85;
+  if(c >= 'A' && c <= 'Z') return 0.66;
+  return 0.5;
+};
+const lebarTeks = (t, uk) => { let w = 0; for(const c of t) w += LEBAR(c) * uk; return w; };
+
+async function inflateBytes(bytes){
+  for(const fmt of ['deflate', 'deflate-raw']){
+    try {
+      const ds = new DecompressionStream(fmt);
+      const buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+      return new Uint8Array(buf);
+    } catch(e){ /* coba format berikutnya */ }
+  }
+  return null;
+}
+
+function bacaStringPdf(s, i){
+  let out = '', dalam = 1;
+  i++;
+  while(i < s.length && dalam > 0){
+    const c = s[i];
+    if(c === '\\'){
+      const n = s[i + 1];
+      if(n >= '0' && n <= '7'){
+        let okt = '', k = i + 1;
+        while(k < s.length && okt.length < 3 && s[k] >= '0' && s[k] <= '7'){ okt += s[k]; k++; }
+        const kode = parseInt(okt, 8);
+        out += WINANSI[kode] || (kode >= 32 && kode < 127 ? String.fromCharCode(kode) : '');
+        i = k; continue;
+      }
+      const peta = { n:'\n', r:'\r', t:'\t', b:'', f:'', '(':'(', ')':')', '\\':'\\' };
+      out += peta[n] !== undefined ? peta[n] : n;
+      i += 2; continue;
+    }
+    if(c === '('){ dalam++; out += c; i++; continue; }
+    if(c === ')'){ dalam--; if(dalam === 0){ i++; break; } out += c; i++; continue; }
+    const kode = c.charCodeAt(0);
+    out += kode > 127 ? (WINANSI[kode] || '') : c;
+    i++;
+  }
+  return { teks: out, akhir: i };
+}
+
+function penggalPdf(isi){
+  const keluar = [];
+  let tm = [1,0,0,1,0,0], baris = [1,0,0,1,0,0], ukuran = 10, leading = 0;
+  const angka = [];
+  let pending = [], i = 0;
+  const kirim = () => {
+    const t = pending.join('');
+    pending = [];
+    if(t.trim()) keluar.push({ x: tm[4], y: tm[5], teks: t, uk: Math.abs(ukuran * tm[0]) || ukuran });
+  };
+  while(i < isi.length){
+    const c = isi[i];
+    if(c === '('){ const r = bacaStringPdf(isi, i); pending.push(r.teks); i = r.akhir; continue; }
+    if(c === '<' && isi[i + 1] !== '<'){
+      const e = isi.indexOf('>', i);
+      if(e > 0){
+        const hex = isi.slice(i + 1, e).replace(/\s+/g, '');
+        let t = '';
+        for(let k = 0; k + 1 < hex.length; k += 2){
+          const kode = parseInt(hex.substr(k, 2), 16);
+          t += kode >= 32 && kode < 127 ? String.fromCharCode(kode) : (WINANSI[kode] || '');
+        }
+        pending.push(t); i = e + 1; continue;
+      }
+    }
+    const num = /^[-+]?[\d.]+/.exec(isi.slice(i, i + 24));
+    if(num && /[\s\[]/.test(isi[i - 1] || ' ')){
+      const v = parseFloat(num[0]);
+      angka.push(v);
+      if(pending.length && v < -120) pending.push(' ');   // geseran besar = spasi
+      i += num[0].length; continue;
+    }
+    const op = /^(TJ|Tj|T\*|Td|TD|Tm|TL|Tf|BT|ET|'|")/.exec(isi.slice(i, i + 3));
+    if(op && /[\s\]>)]/.test(isi[i - 1] || ' ')){
+      const o = op[1];
+      if(o === 'Tj' || o === 'TJ') kirim();
+      else if(o === "'" || o === '"'){ baris = baris.slice(); baris[5] -= leading; tm = baris.slice(); kirim(); }
+      else if(o === 'Tm'){ const a = angka.slice(-6); if(a.length === 6){ tm = a.slice(); baris = a.slice(); } }
+      else if(o === 'Td' || o === 'TD'){
+        const a = angka.slice(-2);
+        if(a.length === 2){
+          if(o === 'TD') leading = -a[1];
+          baris = baris.slice(); baris[4] += a[0]; baris[5] += a[1];
+          tm = baris.slice();
+        }
+      }
+      else if(o === 'T*'){ baris = baris.slice(); baris[5] -= leading; tm = baris.slice(); }
+      else if(o === 'TL'){ leading = angka[angka.length - 1] || 0; }
+      else if(o === 'Tf'){ ukuran = angka[angka.length - 1] || 10; }
+      else if(o === 'BT'){ tm = [1,0,0,1,0,0]; baris = tm.slice(); }
+      angka.length = 0;
+      i += o.length; continue;
+    }
+    i++;
+  }
+  return keluar;
+}
+
+function rakitBarisPdf(penggal){
+  const grup = [];
+  penggal.forEach(p => {
+    const g = grup.find(q => Math.abs(q.y - p.y) < 3.5);
+    if(g) g.item.push(p); else grup.push({ y: p.y, item: [p] });
+  });
+  grup.sort((a, b) => b.y - a.y);
+  return grup.map(g => {
+    g.item.sort((a, b) => a.x - b.x);
+    let out = '', akhirX = null;
+    g.item.forEach(p => {
+      if(akhirX !== null && p.x - akhirX > p.uk * 0.16 && !/\s$/.test(out) && !/^\s/.test(p.teks)) out += ' ';
+      out += p.teks;
+      akhirX = p.x + lebarTeks(p.teks, p.uk);
+    });
+    return out.replace(/\s+/g, ' ').trim();
+  }).filter(t => t);
+}
+
+// PDF -> array baris teks
+async function pdfBaris(arrayBuffer){
+  const b = new Uint8Array(arrayBuffer);
+  let raw = '';
+  for(let i = 0; i < b.length; i += 32768)
+    raw += String.fromCharCode.apply(null, b.subarray(i, Math.min(i + 32768, b.length)));
+  // batas objek diambil dari awal objek berikutnya — data biner bisa saja
+  // memuat kata "endobj" sehingga pencarian penanda tidak selalu aman
+  const kepala = [];
+  const reObj = /(\d+)\s+0\s+obj\b/g;
+  let m;
+  while((m = reObj.exec(raw))) kepala.push({ no: parseInt(m[1], 10), awal: m.index, bodi: m.index + m[0].length });
+  const objek = kepala.map((k, i) => ({ no: k.no,
+    isi: raw.slice(k.bodi, i + 1 < kepala.length ? kepala[i + 1].awal : raw.length) }));
+  objek.sort((a, b2) => a.no - b2.no);
+  const baris = [];
+  for(const o of objek){
+    const i = o.isi.indexOf('stream');
+    if(i < 0) continue;
+    const dict = o.isi.slice(0, i);
+    if(/\/Subtype\s*\/Image|\/DCTDecode|\/Type\s*\/(Font|XRef|ObjStm|Metadata)/.test(dict)) continue;
+    let j = i + 6;
+    if(o.isi[j] === '\r') j++;
+    if(o.isi[j] === '\n') j++;
+    // panjang tepat dari /Length; DecompressionStream menolak sisa byte di
+    // belakang, jadi penanda endstream saja tidak cukup (ada \r\n penutup)
+    const len = (dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/) || [])[1];
+    let e;
+    if(len){
+      e = j + parseInt(len, 10);
+    } else {
+      e = o.isi.indexOf('endstream', j);
+      if(e < 0) continue;
+      while(e > j && (o.isi[e - 1] === '\n' || o.isi[e - 1] === '\r')) e--;
+    }
+    const mentah = o.isi.slice(j, e);
+    const bytes = new Uint8Array(mentah.length);
+    for(let k = 0; k < mentah.length; k++) bytes[k] = mentah.charCodeAt(k) & 255;
+    const keluar = await inflateBytes(bytes);
+    if(!keluar) continue;
+    let teks = '';
+    for(let k = 0; k < keluar.length; k += 32768)
+      teks += String.fromCharCode.apply(null, keluar.subarray(k, Math.min(k + 32768, keluar.length)));
+    if(!/\bBT\b/.test(teks) || !(/\bTJ\b/.test(teks) || /\bTj\b/.test(teks))) continue;
+    baris.push(...rakitBarisPdf(penggalPdf(teks)));
+  }
+  return baris;
+}
+
 // ===== IMPOR LAPORAN DISEMINASI =====
 // Laporan Diseminasi Informasi berisi blok berulang "LAPORAN KEGIATAN
 // DISEMINASI INFORMASI PERTANIAN" — satu blok satu kegiatan. Isinya dipanen
@@ -1350,28 +1529,32 @@ function isTabelDiseminasi(labels){
   return ada(/materi/i) && ada(/metode/i) && ada(/peserta/i);
 }
 
-function parseDiseminasi(xml){
-  const paras = paraTeks(xml);
+// menerima baris teks (paragraf .docx atau baris hasil baca PDF)
+function parseDiseminasi(paras){
+  if(typeof paras === 'string') paras = paraTeks(paras);
   const awal = [];
   paras.forEach((t, i) => { if(/^LAPORAN KEGIATAN DISEMINASI/i.test(t)) awal.push(i); });
   if(!awal.length) return [];
+  // label pada PDF berawalan nomor/huruf ("3. Materi Diseminasi : ...")
+  const NOMOR = '(?:\\d+\\.\\s*|[a-z]\\.\\s*)?';
   const ambil = (blok, label) => {
-    const re = new RegExp('^' + label + '\\s*:\\s*', 'i');
+    const re = new RegExp('^' + NOMOR + label + '\\s*:\\s*', 'i');
     for(const t of blok) if(re.test(t)) return t.replace(re, '').trim();
     return '';
   };
   // baris penutup blok: "Pitu Riawa, 8 Juni 2026" / "Mengetahui," / "NIP. ..."
   const penutup = t => /^[A-Za-z .'-]+,\s*\d{1,2}\s+\S+\s+\d{4}$/.test(t) ||
     /^(Mengetahui|Koordinator|NIP\.)/i.test(t);
+  const reHasil = new RegExp('^' + NOMOR + 'Hasil Kegiatan\\s*:\\s*', 'i');
   const hasilDari = blok => {
-    let i = blok.findIndex(t => /^Hasil Kegiatan\s*:/i.test(t));
+    let i = blok.findIndex(t => reHasil.test(t));
     if(i < 0) return '';
     const masalah = [], solusi = [];
     let mode = null;
     const potong = (t, re, bak) => { const r = t.replace(re, '').trim(); if(r) bak.push(r); };
     for(let k = i; k < blok.length; k++){
       let t = blok[k];
-      if(k === i) t = t.replace(/^Hasil Kegiatan\s*:\s*/i, '').trim();
+      if(k === i) t = t.replace(reHasil, '').trim();
       if(!t) continue;
       if(penutup(t)) break;
       if(/^Masalah\s*:/i.test(t)){ mode = 'm'; potong(t, /^Masalah\s*:\s*/i, masalah); continue; }
@@ -1395,6 +1578,98 @@ function parseDiseminasi(xml){
   }).filter(k => k.materi || k.tanggal);
 }
 
+// ===== IMPOR TABEL UMUM (untuk lampiran laporan lain) =====
+// .docx: tabel pertama yang berisi data; .xlsx: lembar pertama; .csv: teks.
+function tabelDariDocx(xml){
+  for(const t of xml.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>/g)){
+    const trs = [...t[0].matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(m => m[0]);
+    if(trs.length < 2) continue;
+    const rows = trs.map(tr => cellsOfTr(tr).map(c => unescXml(cellText(c))));
+    if(rows.some(r => r.some(v => v))) return rows;
+  }
+  return null;
+}
+
+const kolomXlsx = ref => {                       // "BC12" -> indeks 0-based
+  const h = (ref.match(/^[A-Z]+/) || ['A'])[0];
+  let n = 0;
+  for(const c of h) n = n * 26 + (c.charCodeAt(0) - 64);
+  return n - 1;
+};
+async function tabelDariXlsx(zip){
+  const shared = [];
+  const ss = zip.file('xl/sharedStrings.xml');
+  if(ss){
+    const x = await ss.async('string');
+    for(const si of x.matchAll(/<si>([\s\S]*?)<\/si>/g))
+      shared.push(unescXml([...si[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(q => q[1]).join('')));
+  }
+  const nama = Object.keys(zip.files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort();
+  if(!nama.length) return null;
+  const sheet = await zip.file(nama[0]).async('string');
+  const rows = [];
+  for(const row of sheet.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)){
+    const sel = [];
+    for(const c of row[1].matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)){
+      const ref = (c[1].match(/r="([A-Z]+\d+)"/) || [])[1];
+      const tipe = (c[1].match(/t="([^"]+)"/) || [])[1];
+      const v = (c[2].match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+      const isT = (c[2].match(/<t[^>]*>([\s\S]*?)<\/t>/) || [])[1];
+      let teks = isT !== undefined ? unescXml(isT) : (v === undefined ? '' : v);
+      if(tipe === 's' && v !== undefined) teks = shared[parseInt(v, 10)] || '';
+      sel[ref ? kolomXlsx(ref) : sel.length] = teks;
+    }
+    for(let i = 0; i < sel.length; i++) if(sel[i] === undefined) sel[i] = '';
+    rows.push(sel);
+  }
+  return rows.filter(r => r.some(v => String(v).trim())).length ? rows : null;
+}
+
+function tabelDariCsv(teks){
+  const rows = [];
+  let sel = '', baris = [], kutip = false;
+  const pemisah = (teks.split('\n')[0].split(';').length > teks.split('\n')[0].split(',').length) ? ';' : ',';
+  for(let i = 0; i < teks.length; i++){
+    const c = teks[i];
+    if(kutip){
+      if(c === '"' && teks[i + 1] === '"'){ sel += '"'; i++; }
+      else if(c === '"') kutip = false;
+      else sel += c;
+      continue;
+    }
+    if(c === '"'){ kutip = true; continue; }
+    if(c === pemisah){ baris.push(sel); sel = ''; continue; }
+    if(c === '\n'){ baris.push(sel); rows.push(baris); baris = []; sel = ''; continue; }
+    if(c !== '\r') sel += c;
+  }
+  if(sel || baris.length){ baris.push(sel); rows.push(baris); }
+  return rows.map(r => r.map(v => v.trim())).filter(r => r.some(v => v));
+}
+
+// samakan kolom sumber dengan kolom tabel tujuan lewat kemiripan judulnya
+function petakanTabel(rows, labels){
+  const bersih = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const kepala = rows[0].map(bersih);
+  const punyaKepala = kepala.filter(h => h && /[a-z]/.test(h)).length >= Math.max(2, Math.floor(labels.length / 2));
+  const data = punyaKepala ? rows.slice(1) : rows;
+  const peta = labels.map((l, li) => {
+    if(!punyaKepala) return li;                       // tanpa judul: ikut urutan
+    const t = bersih(l);
+    let idx = kepala.findIndex(h => h && (h === t));
+    if(idx < 0) idx = kepala.findIndex(h => h && (h.includes(t) || t.includes(h)));
+    if(idx < 0){
+      const kata = t.split(' ').filter(w => w.length > 3);
+      idx = kepala.findIndex(h => h && kata.some(w => h.includes(w)));
+    }
+    return idx;
+  });
+  return data.filter(r => r.some(v => String(v).trim())).map((r, i) => labels.map((l, li) => {
+    if(/^no\.?$/i.test(l.trim()) && peta[li] < 0) return String(i + 1);
+    const k = peta[li];
+    return k >= 0 && r[k] !== undefined ? String(r[k]).trim() : '';
+  }));
+}
+
 // susun kegiatan hasil impor mengikuti urutan & jumlah kolom tabel tujuan
 function barisDiseminasi(kegiatan, labels){
   return kegiatan.map((k, i) => labels.map(l => {
@@ -1407,6 +1682,48 @@ function barisDiseminasi(kegiatan, labels){
     if(/hasil|masalah|solusi/i.test(l)) return k.hasil;
     return '';
   }));
+}
+
+// satu pintu impor: pilih pembaca sesuai jenis berkas, hasilkan baris tabel
+// yang sudah sejajar dengan kolom lampiran laporan tujuan
+async function bacaBerkasLampiran(file, labels){
+  const nama = file.name.toLowerCase();
+  if(nama.endsWith('.pdf')){
+    const baris = await pdfBaris(await file.arrayBuffer());
+    if(!baris.length) throw new Error('teks PDF tidak terbaca (kemungkinan hasil pindaian/gambar) — pakai berkas Word-nya');
+    const keg = parseDiseminasi(baris);
+    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length, jenis: 'kegiatan diseminasi' };
+    throw new Error('isi PDF tidak dikenali sebagai Laporan Diseminasi — untuk tabel lain pakai .docx/.xlsx/.csv');
+  }
+  if(nama.endsWith('.docx')){
+    const zip = await JSZip.loadAsync(file);
+    const doc = zip.file('word/document.xml');
+    if(!doc) throw new Error('bukan dokumen Word yang sah');
+    const xml = await doc.async('string');
+    const keg = parseDiseminasi(xml);
+    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length, jenis: 'kegiatan diseminasi' };
+    const tabel = tabelDariDocx(xml);
+    if(tabel){
+      const rows = petakanTabel(tabel, labels);
+      if(rows.length) return { rows, jumlah: rows.length, jenis: 'baris tabel' };
+    }
+    throw new Error('tidak ada tabel atau kegiatan diseminasi yang terbaca dari dokumen itu');
+  }
+  if(nama.endsWith('.xlsx')){
+    const tabel = await tabelDariXlsx(await JSZip.loadAsync(file));
+    if(!tabel) throw new Error('lembar kerja kosong atau tidak terbaca');
+    const rows = petakanTabel(tabel, labels);
+    if(!rows.length) throw new Error('tidak ada baris data pada lembar pertama');
+    return { rows, jumlah: rows.length, jenis: 'baris tabel' };
+  }
+  if(nama.endsWith('.csv') || nama.endsWith('.txt')){
+    const tabel = tabelDariCsv(await file.text());
+    if(!tabel.length) throw new Error('berkas CSV kosong');
+    const rows = petakanTabel(tabel, labels);
+    if(!rows.length) throw new Error('tidak ada baris data pada CSV');
+    return { rows, jumlah: rows.length, jenis: 'baris tabel' };
+  }
+  throw new Error('jenis berkas belum didukung — pakai .pdf, .docx, .xlsx, atau .csv');
 }
 
 // tulis teks ke satu sel (paragraf pertama dipakai, sisanya dikosongkan);
@@ -1562,13 +1879,13 @@ function bukaLampiran(i){
   document.getElementById('lamp-sub').textContent = f.name;
   const auto = f.lamp.dateCols.length;
   document.getElementById('lamp-add').style.display = auto ? 'none' : '';
-  const bisaImpor = !auto && isTabelDiseminasi(f.lamp.labels);
-  document.getElementById('lamp-impor').hidden = !bisaImpor;
+  const diseminasi = isTabelDiseminasi(f.lamp.labels);
+  document.getElementById('lamp-impor').hidden = false;
   document.getElementById('lamp-hint').textContent = auto
-    ? 'kolom tanggal (kuning) mengikuti periode target secara otomatis; jumlah baris menyesuaikan jumlah hari'
-    : bisaImpor
-      ? 'isi manual, atau impor langsung dari file Laporan Diseminasi Informasi (.docx)'
-      : 'isi sesuai data terbaru; baris boleh ditambah atau dihapus';
+    ? 'kolom tanggal (kuning) mengikuti periode target otomatis — unggahan hanya mengisi kolom lainnya'
+    : diseminasi
+      ? 'unggah Laporan Diseminasi (.pdf/.docx) — kegiatannya langsung masuk ke tabel ini'
+      : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah';
   modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
   gambarGrid();           // saat elemennya sudah punya layout
 }
@@ -1624,24 +1941,18 @@ imporFile.addEventListener('change', async () => {
   const hint = document.getElementById('lamp-hint');
   const lamp = files[lampIdx].lamp;
   try {
-    if(!/\.docx$/i.test(file.name)){
-      hint.textContent = 'file harus .docx (ekspor Word dari aplikasi Laporan Diseminasi)';
-      return;
-    }
     hint.textContent = 'membaca ' + file.name + ' ...';
-    const zip = await JSZip.loadAsync(file);
-    const doc = zip.file('word/document.xml');
-    if(!doc){ hint.textContent = 'bukan dokumen Word yang valid'; return; }
-    const kegiatan = parseDiseminasi(await doc.async('string'));
-    if(!kegiatan.length){
-      hint.textContent = 'tidak ada kegiatan diseminasi yang terbaca dari file itu';
-      return;
-    }
-    draft = barisDiseminasi(kegiatan, lamp.labels);
+    const hasil = await bacaBerkasLampiran(file, lamp.labels);
+    // tabel bertanggal: jumlah baris tetap mengikuti tanggal, isi ditimpa
+    draft = lamp.dateCols.length
+      ? draft.map((r, i) => hasil.rows[i]
+          ? r.map((v, c) => lamp.dateCols.includes(c) ? v : (hasil.rows[i][c] || ''))
+          : r)
+      : hasil.rows;
     gambarGrid();
-    hint.textContent = kegiatan.length + ' kegiatan diimpor — periksa isinya lalu tekan SIMPAN';
+    hint.textContent = hasil.jumlah + ' ' + hasil.jenis + ' terbaca — periksa lalu tekan SIMPAN';
   } catch(e){
-    hint.textContent = 'gagal membaca file: ' + (e.message || e);
+    hint.textContent = 'gagal: ' + (e.message || e);
   }
 });
 document.getElementById('lamp-reset').addEventListener('click', () => {
@@ -1794,7 +2105,8 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   detectTipe, applyVariant, VARIANTS, detectDesa, replaceDesa,
   transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan,
   findLampiran, applyLampiran, landscapeRange, setCellText,
-  parseDiseminasi, barisDiseminasi, isTabelDiseminasi };
+  parseDiseminasi, barisDiseminasi, isTabelDiseminasi,
+  pdfBaris, tabelDariDocx, tabelDariXlsx, tabelDariCsv, petakanTabel, bacaBerkasLampiran };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
