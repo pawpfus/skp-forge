@@ -54,6 +54,8 @@
   #dropzone:hover,#dropzone.over{background:rgba(46,224,255,0.06);border-color:var(--cyan);color:var(--text);}
   #dropzone b{color:var(--cyan);font-size:14px;letter-spacing:2px;display:block;}
 
+  #file-list{overflow-x:auto;}
+  #file-list table{min-width:560px;}
   table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px;}
   th,td{border:1px solid rgba(46,224,255,0.18);padding:7px 9px;text-align:left;vertical-align:top;}
   th{color:var(--cyan);font-size:9.5px;letter-spacing:1.5px;background:rgba(46,224,255,0.05);}
@@ -76,7 +78,47 @@
   #btn-generate:disabled{opacity:0.35;cursor:not-allowed;}
   #status{margin-top:12px;font-size:11.5px;letter-spacing:0.5px;color:var(--text-dim);min-height:16px;}
 
-  @media (max-width:600px){ header h1{font-size:15px;} .controls label{flex:1;} select,input[type=number],input[type=text]{min-width:0;width:100%;} }
+  .lamp-btn{background:transparent;border:1px solid rgba(46,224,255,0.45);color:var(--cyan);cursor:pointer;
+    font-family:'Share Tech Mono',monospace;font-size:10px;padding:2px 7px;white-space:nowrap;}
+  .lamp-btn:hover{background:rgba(46,224,255,0.12);}
+  .lamp-btn.done{border-color:var(--green);color:var(--green);}
+
+  #lamp-modal{position:fixed;inset:0;background:rgba(2,6,8,0.86);z-index:50;
+    display:flex;align-items:center;justify-content:center;padding:16px;}
+  #lamp-modal[hidden]{display:none;}
+  .lamp-box{background:var(--panel-bg);border:1px solid var(--line);box-shadow:0 0 40px rgba(0,0,0,0.7);
+    width:min(1100px,100%);max-height:92vh;display:flex;flex-direction:column;}
+  .lamp-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);}
+  .lamp-head h3{font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:2px;color:var(--cyan);margin:0 0 4px;}
+  .lamp-head .sub{font-size:10.5px;color:var(--text-dim);line-height:1.7;word-break:break-word;}
+  .lamp-x{background:transparent;border:1px solid var(--line);color:var(--text-dim);cursor:pointer;
+    font-family:'Share Tech Mono',monospace;font-size:13px;padding:2px 9px;margin-left:auto;flex:none;}
+  .lamp-x:hover{color:var(--red);border-color:var(--red);}
+  .lamp-grid-wrap{overflow:auto;padding:12px 16px;flex:1;}
+  #lamp-grid{width:100%;border-collapse:collapse;font-size:11px;}
+  #lamp-grid th{position:sticky;top:0;background:#08181c;z-index:1;font-size:9px;letter-spacing:1px;
+    padding:6px 7px;border:1px solid rgba(46,224,255,0.18);color:var(--cyan);text-align:left;
+    min-width:90px;vertical-align:bottom;}
+  #lamp-grid td{border:1px solid rgba(46,224,255,0.15);padding:2px;vertical-align:top;}
+  #lamp-grid td.rownum{color:var(--text-dim);text-align:center;padding:6px 4px;font-size:10px;min-width:26px;}
+  #lamp-grid td.auto{color:var(--amber);padding:6px 7px;white-space:nowrap;font-size:10.5px;}
+  #lamp-grid textarea{width:100%;min-width:100px;background:rgba(10,24,28,0.6);border:1px solid transparent;
+    color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;padding:5px 6px;
+    outline:none;resize:vertical;line-height:1.5;}
+  #lamp-grid textarea:focus{border-color:var(--cyan);background:rgba(10,24,28,0.95);}
+  .row-del{background:transparent;border:1px solid rgba(255,59,92,0.35);color:var(--red);cursor:pointer;
+    font-family:'Share Tech Mono',monospace;font-size:10px;padding:3px 6px;}
+  .lamp-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--line);}
+  .lamp-foot button{font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:1px;padding:8px 14px;
+    cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--text);}
+  .lamp-foot button:hover{border-color:var(--cyan);color:var(--cyan);}
+  .lamp-foot .primary{background:var(--green);border-color:var(--green);color:#04121a;font-weight:bold;}
+  .lamp-foot .primary:hover{background:#3dff9f;border-color:#3dff9f;color:#04121a;}
+  .lamp-foot .spacer{flex:1;}
+  .lamp-hint{font-size:10px;color:var(--text-dim);letter-spacing:0.4px;}
+
+  @media (max-width:600px){ header h1{font-size:15px;} .controls label{flex:1;} select,input[type=number],input[type=text]{min-width:0;width:100%;}
+    .lamp-box{max-height:96vh;} .lamp-grid-wrap{padding:8px;} .lamp-foot{padding:10px;} }
 </style>
 </head>
 <body>
@@ -140,18 +182,45 @@
   <div id="status"></div>
 </div>
 
+<div id="lamp-modal" hidden>
+  <div class="lamp-box">
+    <div class="lamp-head">
+      <div>
+        <h3 id="lamp-title">LAMPIRAN</h3>
+        <div class="sub" id="lamp-sub"></div>
+      </div>
+      <button class="lamp-x" id="lamp-close">&#10005;</button>
+    </div>
+    <div class="lamp-grid-wrap"><table id="lamp-grid"></table></div>
+    <div class="lamp-foot">
+      <button id="lamp-add">+ BARIS</button>
+      <button id="lamp-reset">KEMBALIKAN ASLI</button>
+      <span class="lamp-hint" id="lamp-hint"></span>
+      <span class="spacer"></span>
+      <button id="lamp-cancel">BATAL</button>
+      <button id="lamp-save" class="primary">SIMPAN</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const HARI_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const lastDay = (y, m) => new Date(y, m + 1, 0).getDate(); // m = 0-11
 const escHtml = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// teks polos dokumen: tag dibuang tanpa pemisah supaya kata yang terbelah
+// antar-run menyatu kembali, tetapi batas paragraf/tab/baris tetap jadi spasi
+// agar kata paragraf berbeda tidak berdempet ("Otting" + "LAMPIRAN")
+const flatText = xml => xml
+  .replace(/<\/w:p>|<w:p[^>]*\/>|<w:tab\/>|<w:br\/>/g, ' ')
+  .replace(/<[^>]+>/g, '');
+
 // ===== deteksi bulan & tahun sumber dari isi dokumen (fallback: nama file) =====
-// Deteksi jalan di TEKS POLOS (tag dibuang): kata yang terbelah antar-run
-// tetap terbaca, dan angka hex di atribut markup (rsid dsb.) tidak ikut
-// terhitung sebagai "tahun".
+// Deteksi jalan di teks polos: angka hex di atribut markup (rsid dsb.) tidak
+// ikut terhitung sebagai "tahun".
 function detectSource(xml, filename){
-  const flat = xml.replace(/<[^>]+>/g, '');
+  const flat = flatText(xml);
   const up = flat.toUpperCase();
   let mIdx = -1, year = null;
   for(let i = 0; i < 12; i++){
@@ -997,7 +1066,7 @@ const fillB = (s, dst, desa) => s.split('{B}').join(dst.label || ('Bulan ' + BUL
 // deteksi: "Desa X" yang paling sering muncul pada teks dokumen
 function detectDesa(xml){
   const freq = {};
-  const text = xml.replace(/<[^>]+>/g, '');
+  const text = flatText(xml);
   for(const m of text.matchAll(/\bDesa\s+([A-Z][A-Za-z-]+)/g))
     freq[m[1]] = (freq[m[1]] || 0) + 1;
   let best = null, bn = 0;
@@ -1118,6 +1187,10 @@ function transformNameTriwulan(name, src, q){
 
 // ganti seluruh isi teks satu paragraf, format (pPr + rPr run pertama) dipertahankan
 function replaceParaText(paraXml, text){
+  // paragraf kosong ditulis Word sebagai tag swa-tutup <w:p .../>
+  const kosong = paraXml.match(/^<w:p([^>]*?)\/>$/);
+  if(kosong) return '<w:p' + kosong[1] + '><w:r><w:t xml:space="preserve">' +
+    escXml(text) + '</w:t></w:r></w:p>';
   const open = (paraXml.match(/^<w:p[^>]*>/) || ['<w:p>'])[0];
   const pPr = (paraXml.match(/<w:pPr>[\s\S]*?<\/w:pPr>/) || [''])[0];
   const after = pPr ? paraXml.slice(paraXml.indexOf(pPr) + pPr.length) : paraXml.slice(open.length);
@@ -1193,6 +1266,119 @@ function applyVariant(xml, v, dst, desa){
   return xml;
 }
 
+// ===== LAMPIRAN (halaman landscape): baca & tulis tabel datanya =====
+// Tiap laporan punya satu section landscape berisi tabel data spesifik
+// (LTT: realisasi harian, Alsintan: inventaris, Irpom: sarana, dst).
+// Sebagian laporan lampirannya hanya gambar — tidak ada yang bisa diisi.
+const cellsOfTr = tr => [...tr.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map(m => m[0]);
+const cellText = tc => [...tc.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
+  .map(m => m[1]).join('').replace(/\s+/g, ' ').trim();
+const unescXml = t => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+
+// section landscape berakhir pada paragraf yang memuat sectPr-nya
+function landscapeRange(xml){
+  const sects = [...xml.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)];
+  const land = sects.find(s => /w:orient="landscape"/.test(s[0]));
+  if(!land) return null;
+  const prev = sects.filter(s => s.index < land.index).pop();
+  const endP = xml.indexOf('</w:p>', land.index);
+  return { start: prev ? prev.index + prev[0].length : 0,
+           end: endP >= 0 ? endP + 6 : land.index };
+}
+
+function findLampiran(xml){
+  const rg = landscapeRange(xml);
+  if(!rg) return null;
+  const sec = xml.slice(rg.start, rg.end);
+  const tm = sec.match(/<w:tbl>[\s\S]*?<\/w:tbl>/);
+  if(!tm) return null;
+  const trs = [...tm[0].matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(m => m[0]);
+  // baris header = baris awal bertanda tblHeader atau seluruh teksnya tebal
+  let head = 0;
+  while(head < trs.length && (/<w:tblHeader/.test(trs[head]) || /<w:b\/>|<w:b /.test(trs[head]))) head++;
+  if(head >= trs.length) head = Math.min(1, trs.length - 1);
+  const rows = trs.slice(head).map(tr => cellsOfTr(tr).map(c => unescXml(cellText(c))));
+  if(!rows.length) return null;
+  const cols = rows[0].length;
+  // kolom tanggal dd/mm/yyyy dikelola otomatis oleh transformasi periode
+  const dateCols = [];
+  for(let c = 0; c < cols; c++){
+    const n = rows.filter(r => /^\d{2}\/\d{2}\/\d{4}/.test(r[c] || '')).length;
+    if(n && n * 2 >= rows.length) dateCols.push(c);
+  }
+  // label kolom: baris header terakhir, kosong -> baris header pertama
+  // (kolom bergabung diuraikan lewat gridSpan agar posisinya pas)
+  const expand = tr => {
+    const out = [];
+    cellsOfTr(tr).forEach(c => {
+      const g = c.match(/<w:gridSpan w:val="(\d+)"/);
+      const t = unescXml(cellText(c));
+      for(let i = 0, n = g ? parseInt(g[1], 10) : 1; i < n; i++) out.push(i === 0 ? t : '');
+    });
+    return out;
+  };
+  const h1 = head ? expand(trs[0]) : [];
+  const hL = head ? expand(trs[head - 1]) : [];
+  const labels = [];
+  for(let c = 0; c < cols; c++) labels.push(hL[c] || h1[c] || ('KOLOM ' + (c + 1)));
+  // judul lampiran (paragraf "LAMPIRAN : ...") untuk ditampilkan di editor
+  const jm = sec.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
+  let judul = '';
+  for(const p of jm){
+    const t = cellText(p);
+    if(/^LAMPIRAN\s*:/i.test(t)){ judul = unescXml(t); break; }
+  }
+  return { head, cols, rows, dateCols, labels, judul,
+           tblStart: rg.start + tm.index, tblEnd: rg.start + tm.index + tm[0].length };
+}
+
+// tulis teks ke satu sel (paragraf pertama dipakai, sisanya dikosongkan);
+// bentuk swa-tutup dicoba lebih dulu agar tak tertelan pola paragraf biasa
+function setCellText(tc, text){
+  const ps = [...tc.matchAll(/<w:p[^>]*\/>|<w:p[ >][\s\S]*?<\/w:p>/g)];
+  if(!ps.length) return tc;
+  let out = '', last = 0;
+  ps.forEach((p, i) => {
+    out += tc.slice(last, p.index) + replaceParaText(p[0], i === 0 ? text : '');
+    last = p.index + p[0].length;
+  });
+  return out + tc.slice(last);
+}
+
+// tulis data editor ke tabel lampiran (dipanggil SEBELUM transformasi tanggal)
+function applyLampiran(xml, lamp){
+  const f = findLampiran(xml);
+  if(!f || !lamp || !lamp.rows) return xml;
+  const tbl = xml.slice(f.tblStart, f.tblEnd);
+  const trMs = [...tbl.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)];
+  const trs = trMs.map(m => m[0]);
+  const data = trs.slice(f.head);
+  if(!data.length) return xml;
+  const auto = new Set(lamp.dateCols || []);
+  // isi ulang sel berdasarkan indeks (bukan replace teks) agar sel bernilai
+  // sama persis tidak saling tertukar
+  const tulis = (tr, vals) => {
+    const ms = [...tr.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)];
+    let out = '', last = 0;
+    ms.forEach((m, i) => {
+      out += tr.slice(last, m.index);
+      out += (auto.has(i) || vals[i] == null) ? m[0] : setCellText(m[0], vals[i]);
+      last = m.index + m[0].length;
+    });
+    return out + tr.slice(last);
+  };
+  // tabel bertanggal: jumlah baris ditentukan periode, isi ditimpa per indeks.
+  // tabel biasa: jumlah baris mengikuti editor (baris tambahan meniru baris terakhir)
+  const tpl = data[data.length - 1];
+  const baru = auto.size
+    ? data.map((tr, i) => lamp.rows[i] ? tulis(tr, lamp.rows[i]) : tr)
+    : lamp.rows.map((vals, i) => tulis(i < data.length ? data[i] : tpl, vals));
+  const from = trMs[0].index, to = trMs[trMs.length - 1].index + trs[trs.length - 1].length;
+  const tblBaru = tbl.slice(0, from) + trs.slice(0, f.head).join('') + baru.join('') + tbl.slice(to);
+  return xml.slice(0, f.tblStart) + tblBaru + xml.slice(f.tblEnd);
+}
+
 function transformName(name, src, dst){
   let n = name.split(BULAN[src.mIdx]).join(BULAN[dst.mIdx])
               .split(BULAN[src.mIdx].toUpperCase()).join(BULAN[dst.mIdx].toUpperCase())
@@ -1239,13 +1425,18 @@ function setStatus(msg, tone){
 
 function renderList(){
   if(!files.length){ listEl.innerHTML = ''; btn.disabled = true; return; }
-  let html = '<table><tr><th>#</th><th>FILE</th><th>BULAN ASAL</th><th>DESA</th><th>VARIASI NARASI</th><th></th></tr>';
+  let html = '<table><tr><th>#</th><th>FILE</th><th>BULAN ASAL</th><th>DESA</th><th>VARIASI NARASI</th>' +
+    '<th>LAMPIRAN</th><th></th></tr>';
   files.forEach((f, i) => {
+    const lampSel = !f.lamp ? '<span class="warn">&mdash; (gambar)</span>'
+      : `<button class="lamp-btn${f.lamp.edited ? ' done' : ''}" data-lamp="${i}">` +
+        (f.lamp.edited ? '&#10003; DIISI (' + f.lamp.rows.length + ')' : 'ISI DATA (' + f.lamp.rows.length + ')') + '</button>';
     html += `<tr><td>${i + 1}</td><td>${escHtml(f.name)}</td>
       <td>${f.src ? '<span class="src">' + BULAN[f.src.mIdx].toUpperCase() + ' ' + f.src.year + '</span>'
                   : '<span class="err">TIDAK TERDETEKSI</span>'}</td>
       <td>${f.desa ? '<span class="src">' + escHtml(f.desa.toUpperCase()) + '</span>' : '<span class="warn">&mdash;</span>'}</td>
       <td>${f.tipe ? '<span class="ok">' + f.tipe.label + '</span>' : '<span class="warn">&mdash; (narasi asli)</span>'}</td>
+      <td>${lampSel}</td>
       <td><button class="del-btn" data-i="${i}">HAPUS</button></td></tr>`;
   });
   html += '</table>';
@@ -1253,6 +1444,8 @@ function renderList(){
   listEl.querySelectorAll('.del-btn').forEach(b => b.addEventListener('click', () => {
     files.splice(parseInt(b.dataset.i, 10), 1); renderList();
   }));
+  listEl.querySelectorAll('.lamp-btn').forEach(b => b.addEventListener('click',
+    () => bukaLampiran(parseInt(b.dataset.lamp, 10))));
   btn.disabled = !files.some(f => f.src);
 }
 
@@ -1264,8 +1457,10 @@ async function addFiles(fileList){
       const doc = zip.file('word/document.xml');
       if(!doc){ setStatus('bukan dokumen Word yang valid: ' + file.name, 'err'); continue; }
       const xml = await doc.async('string');
+      const lamp = findLampiran(xml);
+      if(lamp){ lamp.asli = lamp.rows.map(r => r.slice()); lamp.edited = false; }
       files.push({ file, name: file.name, src: detectSource(xml, file.name),
-        tipe: detectTipe(file.name), desa: detectDesa(xml) });
+        tipe: detectTipe(file.name), desa: detectDesa(xml), lamp });
     } catch(e){
       setStatus('gagal membaca ' + file.name + ' — ' + (e.message || e), 'err');
     }
@@ -1276,6 +1471,83 @@ async function addFiles(fileList){
   const ok = files.filter(f => f.src).length;
   if(ok) setStatus(ok + ' file siap digenerate.', 'ok');
 }
+
+// ===== editor lampiran =====
+const modal = document.getElementById('lamp-modal');
+const grid = document.getElementById('lamp-grid');
+let lampIdx = -1, draft = [];
+
+function bukaLampiran(i){
+  const f = files[i];
+  if(!f || !f.lamp) return;
+  lampIdx = i;
+  draft = f.lamp.rows.map(r => r.slice());
+  document.getElementById('lamp-title').textContent = f.lamp.judul || 'LAMPIRAN';
+  document.getElementById('lamp-sub').textContent = f.name;
+  const auto = f.lamp.dateCols.length;
+  document.getElementById('lamp-add').style.display = auto ? 'none' : '';
+  document.getElementById('lamp-hint').textContent = auto
+    ? 'kolom tanggal (kuning) mengikuti periode target secara otomatis; jumlah baris menyesuaikan jumlah hari'
+    : 'isi sesuai data terbaru; baris boleh ditambah atau dihapus';
+  gambarGrid();
+  modal.hidden = false;
+}
+function gambarGrid(){
+  const lamp = files[lampIdx].lamp;
+  const auto = new Set(lamp.dateCols);
+  let h = '<tr><th></th>' + lamp.labels.map(l => '<th>' + escHtml(l) + '</th>').join('') +
+    (auto.size ? '' : '<th></th>') + '</tr>';
+  draft.forEach((row, ri) => {
+    h += '<tr><td class="rownum">' + (ri + 1) + '</td>';
+    for(let c = 0; c < lamp.cols; c++){
+      h += auto.has(c)
+        ? '<td class="auto">' + escHtml(row[c] || '') + '</td>'
+        : '<td><textarea rows="1" data-r="' + ri + '" data-c="' + c + '">' + escHtml(row[c] || '') + '</textarea></td>';
+    }
+    h += auto.size ? '' : '<td><button class="row-del" data-r="' + ri + '">&#10005;</button></td>';
+    h += '</tr>';
+  });
+  grid.innerHTML = h;
+  grid.querySelectorAll('textarea').forEach(t => {
+    t.addEventListener('input', () => {
+      draft[+t.dataset.r][+t.dataset.c] = t.value;
+      t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px';
+    });
+    if(t.value.length > 40){ t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
+  });
+  grid.querySelectorAll('.row-del').forEach(b => b.addEventListener('click', () => {
+    if(draft.length <= 1) return;
+    draft.splice(+b.dataset.r, 1); gambarGrid();
+  }));
+}
+function tutupLampiran(){ modal.hidden = true; lampIdx = -1; draft = []; }
+
+document.getElementById('lamp-add').addEventListener('click', () => {
+  const lamp = files[lampIdx].lamp;
+  // nomor urut otomatis bila kolom pertama berisi angka berurutan
+  const baris = new Array(lamp.cols).fill('');
+  if(draft.length && /^\d+$/.test(draft[draft.length - 1][0] || ''))
+    baris[0] = String(parseInt(draft[draft.length - 1][0], 10) + 1);
+  draft.push(baris);
+  gambarGrid();
+  grid.parentElement.scrollTop = grid.parentElement.scrollHeight;
+});
+document.getElementById('lamp-reset').addEventListener('click', () => {
+  draft = files[lampIdx].lamp.asli.map(r => r.slice());
+  gambarGrid();
+});
+document.getElementById('lamp-save').addEventListener('click', () => {
+  const lamp = files[lampIdx].lamp;
+  lamp.rows = draft.map(r => r.slice());
+  lamp.edited = JSON.stringify(lamp.rows) !== JSON.stringify(lamp.asli);
+  tutupLampiran();
+  renderList();
+  setStatus('data lampiran disimpan.', 'ok');
+});
+document.getElementById('lamp-cancel').addEventListener('click', tutupLampiran);
+document.getElementById('lamp-close').addEventListener('click', tutupLampiran);
+modal.addEventListener('click', e => { if(e.target === modal) tutupLampiran(); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && !modal.hidden) tutupLampiran(); });
 
 drop.addEventListener('click', () => input.click());
 input.addEventListener('change', () => { addFiles([...input.files]); input.value = ''; });
@@ -1306,6 +1578,9 @@ btn.addEventListener('click', async () => {
       }
       return xml;
     };
+    // data lampiran ditulis sebelum transformasi tanggal supaya barisnya masih
+    // sejajar dengan tabel yang tampil di editor
+    const olahLampiran = (xml, f) => (f.lamp && f.lamp.edited) ? applyLampiran(xml, f.lamp) : xml;
     const bungkus = async (zip, xml, name) => {
       zip.file('word/document.xml', xml);
       const blob = await zip.generateAsync({ type: 'blob',
@@ -1364,8 +1639,9 @@ btn.addEventListener('click', async () => {
         if(desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
         others.push(ox);
       }
-      xml = mergeDailyRows(xml, others);
       xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
+      xml = olahLampiran(xml, base); // sebelum digabung: baris masih milik bulan dasar
+      xml = mergeDailyRows(xml, others);
       await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
         transformNameTriwulan(base.name, base.src, q));
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
@@ -1379,7 +1655,7 @@ btn.addEventListener('click', async () => {
         setStatus('memproses ' + f.name + ' ...');
         const zip = await JSZip.loadAsync(f.file);
         let xml = await zip.file('word/document.xml').async('string');
-        xml = olahNarasi(xml, f, dst);
+        xml = olahLampiran(olahNarasi(xml, f, dst), f);
         await bungkus(zip, transformXml(xml, f.src, dst), transformName(f.name, f.src, dst));
       }
       zipName = 'Laporan SKP ' + BULAN[dst.mIdx] + ' ' + dst.year + '.zip';
@@ -1404,7 +1680,8 @@ btn.addEventListener('click', async () => {
 // dipakai pengujian otomatis
 window._skp = { detectSource, transformXml, transformName, lastDay,
   detectTipe, applyVariant, VARIANTS, detectDesa, replaceDesa,
-  transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan };
+  transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan,
+  findLampiran, applyLampiran, landscapeRange, setCellText };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});

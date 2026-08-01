@@ -1,5 +1,5 @@
 // SKP FORGE — service worker (offline shell)
-const VERSION = 'skp-forge-v1.1.3';
+const VERSION = 'skp-forge-v1.2.0';
 const SHELL_ASSETS = [
   './',
   './index.html',
