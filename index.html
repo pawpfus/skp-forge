@@ -129,6 +129,10 @@
   .lamp-foot .primary:hover{background:linear-gradient(180deg,#ffd97a 0%,var(--ember-hi) 100%);color:#1a0d04;}
   .lamp-foot .spacer{flex:1;}
   .lamp-hint{font-size:10px;color:var(--text-dim);letter-spacing:0.4px;}
+  .lamp-periode{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:1.5px;color:var(--text-dim);}
+  .lamp-periode[hidden]{display:none;}
+  .lamp-periode select,.lamp-periode input{font-size:11px;padding:6px 8px;min-width:0;}
+  .lamp-periode select{min-width:112px;} .lamp-periode input{width:78px;}
 
   @media (max-width:600px){ header h1{font-size:15px;} .controls label,.controls label.wide{flex:1 1 100%;} select,input[type=number],input[type=text]{min-width:0;width:100%;}
     .lamp-box{max-height:96vh;} .lamp-grid-wrap{padding:8px;} .lamp-foot{padding:10px;} }
@@ -213,6 +217,10 @@
       <input type="file" id="lamp-impor-file" accept=".pdf,.docx,.xlsx,.csv" style="display:none">
       <button id="lamp-add">+ BARIS</button>
       <button id="lamp-reset">KEMBALIKAN ASLI</button>
+      <span class="lamp-periode" id="lamp-periode" hidden>BULAN KOLOM TANGGAL
+        <select id="lamp-bulan"></select>
+        <input type="number" id="lamp-tahun" min="2024" max="2099">
+      </span>
       <span class="lamp-hint" id="lamp-hint"></span>
       <span class="spacer"></span>
       <button id="lamp-cancel">BATAL</button>
@@ -271,12 +279,13 @@ function detectSource(xml, filename){
 // ===== transformasi isi document.xml dari periode sumber ke periode target =====
 // Urutan penting: operasi baris tabel & tanggal dd/mm/yyyy memakai tanggal
 // SUMBER, jadi harus jalan sebelum nama bulan/tahun ditukar.
-function transformXml(xml, src, dst){
-  const sName = BULAN[src.mIdx], dName = BULAN[dst.mIdx];
+// Tabel harian (lampiran LTT): jumlah baris <w:tr> dan tanggal dd/mm/yyyy (Www)
+// dipindahkan dari periode src ke periode dst. Dipisah dari transformXml supaya
+// bulan tabel dapat ditetapkan sendiri, terlepas dari periode laporan.
+function setTabelHarian(xml, src, dst){
   const sLast = lastDay(src.year, src.mIdx), dLast = lastDay(dst.year, dst.mIdx);
   const sMM = String(src.mIdx + 1).padStart(2, '0'), dMM = String(dst.mIdx + 1).padStart(2, '0');
-
-  // -- 1. tabel harian: tambah/kurangi baris <w:tr> sesuai jumlah hari target --
+  if(sMM === dMM && src.year === dst.year) return xml;
   const dateTag = dd => String(dd).padStart(2, '0') + '/' + sMM + '/' + src.year;
   // cari awal tag baris; '<w:tr' saja juga cocok dengan '<w:trPr' — pastikan
   // karakter berikutnya spasi atau '>'
@@ -311,9 +320,7 @@ function transformXml(xml, src, dst){
       xml = xml.slice(0, b.end) + extra + xml.slice(b.end);
     }
   }
-
-  // -- 2. tanggal tabel harian dd/mm/yyyy (Www): hitung ulang untuk bulan target --
-  xml = xml.replace(/(\d{2})\/(\d{2})\/(\d{4})(\s*\((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\))?/g,
+  return xml.replace(/(\d{2})\/(\d{2})\/(\d{4})(\s*\((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\))?/g,
     (all, dd, mm, yyyy, wd) => {
       if(mm !== sMM || parseInt(yyyy, 10) !== src.year) return all;
       const d = parseInt(dd, 10);
@@ -321,6 +328,15 @@ function transformXml(xml, src, dst){
       const nw = wd ? ' (' + HARI_EN[new Date(dst.year, dst.mIdx, d).getDay()] + ')' : '';
       return dd + '/' + dMM + '/' + dst.year + nw;
     });
+}
+
+// lewatiTabel: tabel harian sudah diatur sendiri (bulan tabel dipilih pengguna)
+function transformXml(xml, src, dst, lewatiTabel){
+  const sName = BULAN[src.mIdx], dName = BULAN[dst.mIdx];
+  const sLast = lastDay(src.year, src.mIdx), dLast = lastDay(dst.year, dst.mIdx);
+
+  // -- 1&2. tabel harian: jumlah baris + tanggal dd/mm/yyyy --
+  if(!lewatiTabel) xml = setTabelHarian(xml, src, dst);
 
   // -- 3. nama bulan & tahun: lintas-run (nama bulan bisa terbelah antar-run) --
   xml = swapRunText(xml, sName, dName);
@@ -2439,7 +2455,54 @@ async function addFiles(fileList){
 // ===== editor lampiran =====
 const modal = document.getElementById('lamp-modal');
 const grid = document.getElementById('lamp-grid');
+const selLampBulan = document.getElementById('lamp-bulan');
+const selLampTahun = document.getElementById('lamp-tahun');
 let lampIdx = -1, draft = [];
+
+BULAN.forEach((b, i) => {
+  const o = document.createElement('option');
+  o.value = i; o.textContent = b.toUpperCase();
+  selLampBulan.appendChild(o);
+});
+
+// periode yang dipilih di panel 2 (dipakai sebagai nilai awal bulan tabel)
+const periodeTarget = () => ({
+  mIdx: selJenis.value === 'triwulan'
+    ? parseInt(document.getElementById('sel-triwulan').value, 10) * 3 + 2
+    : parseInt(selBulan.value, 10),
+  year: parseInt(selTahun.value, 10) || new Date().getFullYear()
+});
+
+// baris bertanggal disusun ulang untuk bulan pilihan: isi hari yang sudah ada
+// dipertahankan, hari tambahan dibiarkan kosong, baris non-tanggal (TOTAL)
+// tetap di bawah
+function terapkanPeriodeDraft(lamp, per){
+  const kol = lamp.dateCols[0];
+  if(kol == null) return;
+  const RE = /^(\d{2})\/(\d{2})\/(\d{4})(\s*\((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\))?/;
+  const harian = [], lain = [];
+  draft.forEach(r => (RE.test(String(r[kol] || '')) ? harian : lain).push(r));
+  if(!harian.length) return;
+  const pakaiHari = RE.exec(String(harian[0][kol]))[4] != null;
+  const MM = String(per.mIdx + 1).padStart(2, '0');
+  const n = lastDay(per.year, per.mIdx);
+  // hari tambahan dikosongkan, kecuali kolom yang isinya sama di semua hari
+  // (mis. "Kegiatan: Tanam") — itu label tetap, bukan data harian
+  const tetap = new Array(lamp.cols).fill('');
+  for(let c = 0; c < lamp.cols; c++){
+    if(c === kol) continue;
+    const v = String(harian[0][c] || '');
+    if(harian.every(r => String(r[c] || '') === v)) tetap[c] = v;
+  }
+  const baru = [];
+  for(let d = 1; d <= n; d++){
+    const r = harian[d - 1] ? harian[d - 1].slice() : tetap.slice();
+    r[kol] = String(d).padStart(2, '0') + '/' + MM + '/' + per.year +
+      (pakaiHari ? ' (' + HARI_EN[new Date(per.year, per.mIdx, d).getDay()] + ')' : '');
+    baru.push(r);
+  }
+  draft = baru.concat(lain);
+}
 
 function bukaLampiran(i){
   const f = files[i];
@@ -2449,17 +2512,38 @@ function bukaLampiran(i){
   document.getElementById('lamp-title').textContent = f.lamp.judul || 'LAMPIRAN';
   document.getElementById('lamp-sub').textContent = f.name;
   const auto = f.lamp.dateCols.length;
+  const triwulan = selJenis.value === 'triwulan';
   document.getElementById('lamp-add').style.display = auto ? 'none' : '';
+  // bulan kolom tanggal hanya berlaku untuk laporan bulanan; pada triwulan
+  // tabelnya gabungan tiga bulan sehingga tanggalnya tidak boleh dipaksa
+  const aturPeriode = !!auto && !triwulan;
+  document.getElementById('lamp-periode').hidden = !aturPeriode;
+  if(aturPeriode){
+    const per = f.lamp.periode || periodeTarget();
+    selLampBulan.value = per.mIdx;
+    selLampTahun.value = per.year;
+    terapkanPeriodeDraft(f.lamp, per);
+  }
   const diseminasi = isTabelDiseminasi(f.lamp.labels);
   const nyambung = diseminasi || (f.tipe && RINGKAS[f.tipe.key]);
   document.getElementById('lamp-impor').hidden = false;
   document.getElementById('lamp-hint').textContent = diseminasi
     ? 'unggah Laporan Diseminasi (.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
-    : (auto ? 'kolom tanggal (kuning) mengikuti periode target otomatis — unggahan hanya mengisi kolom lainnya. ' : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah. ') +
+    : (auto ? (aturPeriode ? 'kolom tanggal (kuning) mengikuti bulan di samping — ubah bila tabelnya untuk bulan lain. '
+                           : 'kolom tanggal (kuning) mengikuti periode target otomatis. ')
+            : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah. ') +
       (nyambung ? 'Angkanya otomatis diselaraskan ke target, capaian, kesimpulan, permasalahan, upaya, dan output.' : '');
   modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
   gambarGrid();           // saat elemennya sudah punya layout
 }
+
+[selLampBulan, selLampTahun].forEach(el => el.addEventListener('change', () => {
+  if(lampIdx < 0) return;
+  const th = parseInt(selLampTahun.value, 10);
+  if(!(th >= 2024 && th <= 2099)) return;
+  terapkanPeriodeDraft(files[lampIdx].lamp, { mIdx: parseInt(selLampBulan.value, 10), year: th });
+  gambarGrid();
+}));
 function gambarGrid(){
   const lamp = files[lampIdx].lamp;
   const auto = new Set(lamp.dateCols);
@@ -2527,13 +2611,24 @@ imporFile.addEventListener('change', async () => {
   }
 });
 document.getElementById('lamp-reset').addEventListener('click', () => {
-  draft = files[lampIdx].lamp.asli.map(r => r.slice());
+  const f = files[lampIdx];
+  draft = f.lamp.asli.map(r => r.slice());
+  f.lamp.periode = null;
+  if(!document.getElementById('lamp-periode').hidden && f.src){
+    selLampBulan.value = f.src.mIdx;      // kembali ke bulan dokumen asal
+    selLampTahun.value = f.src.year;
+  }
   gambarGrid();
 });
 document.getElementById('lamp-save').addEventListener('click', () => {
   const lamp = files[lampIdx].lamp;
   lamp.rows = draft.map(r => r.slice());
-  lamp.edited = JSON.stringify(lamp.rows) !== JSON.stringify(lamp.asli);
+  if(!document.getElementById('lamp-periode').hidden){
+    const th = parseInt(selLampTahun.value, 10);
+    if(!(th >= 2024 && th <= 2099)){ setStatus('tahun kolom tanggal tidak valid', 'err'); return; }
+    lamp.periode = { mIdx: parseInt(selLampBulan.value, 10), year: th };
+  }
+  lamp.edited = !!lamp.periode || JSON.stringify(lamp.rows) !== JSON.stringify(lamp.asli);
   tutupLampiran();
   renderList();
   setStatus('data lampiran disimpan.', 'ok');
@@ -2580,8 +2675,13 @@ btn.addEventListener('click', async () => {
     // sejajar dengan tabel yang tampil di editor
     // tundaData: tabel harian triwulan baru lengkap setelah digabung, jadi
     // perhitungan angkanya dikerjakan belakangan
+    // bulan kolom tanggal ditetapkan dulu supaya jumlah barisnya cocok dengan
+    // yang tampil di editor, baru datanya ditulis
+    const aturTanggal = (f, tundaData) =>
+      !!(f.lamp && f.lamp.edited && f.lamp.periode && f.lamp.dateCols.length && !tundaData);
     const olahLampiran = (xml, f, labelPeriode, tundaData) => {
       if(!f.lamp || !f.lamp.edited) return xml;
+      if(aturTanggal(f, tundaData)) xml = setTabelHarian(xml, f.src, f.lamp.periode);
       xml = applyLampiran(xml, f.lamp);
       // laporan pelaksanaan tugas & fungsi: seluruh isinya diselaraskan
       // dengan kegiatan diseminasi yang diunggah
@@ -2684,7 +2784,8 @@ btn.addEventListener('click', async () => {
         let xml = await zip.file('word/document.xml').async('string');
         xml = olahLampiran(olahNarasi(xml, f, dst), f, 'Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year);
         xml = await olahTautan(zip, xml, f);
-        await bungkus(zip, transformXml(xml, f.src, dst), transformName(f.name, f.src, dst));
+        await bungkus(zip, transformXml(xml, f.src, dst, aturTanggal(f)),
+          transformName(f.name, f.src, dst));
       }
       zipName = 'Laporan SKP ' + BULAN[dst.mIdx] + ' ' + dst.year + '.zip';
     }
@@ -2713,7 +2814,7 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   parseDiseminasi, barisDiseminasi, isTabelDiseminasi,
   pdfBaris, tabelDariDocx, tabelDariXlsx, tabelDariCsv, petakanTabel, bacaBerkasLampiran,
   integrasiDiseminasi, kegiatanDariBaris, kelompokKegiatan, tabelSetelahJudul,
-  gantiTabelSetelahJudul, gantiParagrafSetelahJudul, tulisTabel,
+  gantiTabelSetelahJudul, gantiParagrafSetelahJudul, tulisTabel, setTabelHarian,
   integrasiData, RINGKAS, angkaId, fmtId, bacaTabelSetelahJudul, selaraskanBaris,
   sisipBarisAwal, selaraskanOutput,
   detectTautan, replaceTautan, replaceTautanRels };
