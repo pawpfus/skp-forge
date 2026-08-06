@@ -1,5 +1,5 @@
 // SKP FORGE — service worker (offline shell)
-const VERSION = 'skp-forge-v1.8.0';
+const VERSION = 'skp-forge-v2.0.0';
 const SHELL_ASSETS = [
   './',
   './index.html',
@@ -10,10 +10,10 @@ const SHELL_ASSETS = [
   './icons/apple-touch-icon.png',
   './vendor/jszip.min.js',
   './vendor/fonts.css',
-  './vendor/fonts/orbitron-500-latin.woff2',
-  './vendor/fonts/orbitron-700-latin.woff2',
-  './vendor/fonts/orbitron-900-latin.woff2',
-  './vendor/fonts/share-tech-mono-400-latin.woff2'
+  './vendor/fonts/oswald-latin.woff2',
+  './vendor/fonts/barlow-400-latin.woff2',
+  './vendor/fonts/barlow-500-latin.woff2',
+  './vendor/fonts/barlow-600-latin.woff2'
 ];
 
 self.addEventListener('install', e => {
