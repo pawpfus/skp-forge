@@ -3,306 +3,296 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SKP FORGE — LAPORAN BULANAN</title>
-<meta name="theme-color" content="#0e1114" />
+<title>ESCAPES — Laporan Bulanan</title>
+<meta name="theme-color" content="#0e1116" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2314171a'/%3E%3Crect x='4' y='4' width='56' height='56' fill='none' stroke='%238b959e' stroke-width='2'/%3E%3Ctext x='32' y='43' font-family='Arial Narrow,Impact,sans-serif' font-size='31' font-weight='bold' text-anchor='middle' fill='%23f2610c'%3ESF%3C/text%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23161b22'/%3E%3Cg fill='none' stroke='%23c2f24a' stroke-width='4.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='19' y='15' width='26' height='35' rx='5.5'/%3E%3Cpath d='M25 29h14'/%3E%3Cpath d='M25 36h14'/%3E%3Cpath d='M25 43h9'/%3E%3C/g%3E%3C/svg%3E" />
 <link rel="stylesheet" href="vendor/fonts.css">
 <script src="vendor/jszip.min.js"></script><!-- JSZip 3.10.1 (pinned, self-hosted) -->
 <style>
   /* ===================================================================
-     TEMA: BENGKEL BAJA
-     Pelat baja disikat, garis gambar kerja, label stensil, oranye
-     keselamatan. Tanpa pendar, tanpa siku kurung HUD — kesannya
-     perkakas bengkel, bukan layar fiksi ilmiah.
+     ESCAPES — mengikuti sistem tampilan Eviden LCS:
+     permukaan gelap kebiruan, kartu bersudut lembut, aksen limau,
+     Instrument Sans untuk antarmuka dan JetBrains Mono untuk label kecil.
      =================================================================== */
   :root{
     color-scheme:dark;
-    /* nama --ember-hi / --spark / --danger / --text-dim dipakai juga oleh
-       skrip status, jadi namanya dipertahankan */
-    --ember:#f2610c; --ember-hi:#ff7a2e; --spark:#e8b21f; --danger:#e2483c;
-    --steel:#8b959e;
-    --bg:#0a0d0f; --plate:#1a1e22; --plate-hi:#232930; --slot:#0a0d0f;
-    --line:#252b31; --edge:#39414a; --bevel:rgba(255,255,255,0.055);
-    --text:#dfe4e8; --text-dim:#8b959e;
-    --pad:20px;
-    /* pita bahaya & sikatan pelat dipakai berulang */
-    --hazard:repeating-linear-gradient(135deg,var(--ember) 0 9px,#15181b 9px 18px);
-    --brushed:repeating-linear-gradient(90deg,rgba(255,255,255,0.016) 0 1px,transparent 1px 4px);
+    --bg:#0e1116; --card:#161b22; --soft:#1b212a;
+    --line:#242c36; --line-2:#323b47;
+    --ink:#e6ecf3; --ink-2:#aab4c1; --ink-3:#6b7686; --ink-4:#454f5c;
+    --accent:#c2f24a; --accent-ink:#12160a;
+    --accent-soft:rgba(194,242,74,.13); --accent-line:rgba(194,242,74,.38);
+    --ok:#2fbd7e; --warn:#f0b429; --bad:#ff6a5a;
+    /* nama berikut dipakai juga oleh skrip status — dipertahankan */
+    --ember-hi:var(--accent); --spark:var(--warn); --danger:var(--bad); --text-dim:var(--ink-3);
+    --radius:7px; --radius-btn:8px;
+    --shadow:0 1px 0 rgba(0,0,0,.5),0 12px 34px rgba(0,0,0,.4);
+    --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+    --wrap:1120px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;min-height:100%;}
-  body{
-    background:var(--brushed),linear-gradient(180deg,#12161a 0,#0b0e10 520px,#090b0d 100%) fixed;
-    color:var(--text);padding:0 16px 72px;
-    font-family:'Barlow',system-ui,-apple-system,'Segoe UI',sans-serif;
-    font-size:14px;line-height:1.5;font-feature-settings:"tnum" 1;
-    -webkit-font-smoothing:antialiased;
-  }
-  /* pita bahaya melintang di puncak halaman */
-  body::before{content:'';position:fixed;top:0;left:0;right:0;height:5px;
-    background:var(--hazard);opacity:0.9;z-index:60;pointer-events:none;}
+  body{background:var(--bg);color:var(--ink);
+    font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+    font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    padding:0 0 64px;}
 
-  /* ---------- papan nama mesin ---------- */
-  header{position:relative;max-width:880px;margin:34px auto 20px;display:flex;align-items:center;gap:16px;
-    padding:16px 20px;background:var(--brushed),linear-gradient(180deg,var(--plate-hi),#141719);
-    border:1px solid var(--edge);
-    box-shadow:inset 0 1px 0 var(--bevel),inset 0 -1px 0 rgba(0,0,0,0.5),0 2px 0 rgba(0,0,0,0.45);}
-  header::after{content:'';position:absolute;left:-1px;right:-1px;bottom:-4px;height:3px;background:var(--ember);}
-  header .dot{width:32px;height:32px;flex:none;background:var(--hazard);
-    border:1px solid #050708;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.07);}
-  header h1{font-family:'Oswald',Impact,'Arial Narrow',sans-serif;font-weight:600;font-size:30px;
-    letter-spacing:0.085em;margin:0;line-height:1;color:#f0f4f7;
-    text-shadow:0 2px 0 rgba(0,0,0,0.75);}
-  header small{display:block;font-size:10.5px;letter-spacing:0.26em;color:#8d979f;
-    margin-top:7px;text-transform:uppercase;}
+  /* ---------- batang atas ---------- */
+  .topbar{position:sticky;top:0;z-index:50;background:var(--card);
+    border-top:2px solid var(--accent);border-bottom:1px solid var(--line);}
+  .topbar-inner{max-width:var(--wrap);margin:0 auto;padding:12px 22px;
+    display:flex;align-items:center;gap:16px;}
+  .brand{display:flex;align-items:center;gap:12px;min-width:0;}
+  .brand .logo{width:38px;height:38px;flex:0 0 auto;border-radius:9px;
+    background:var(--soft);border:1px solid var(--line);display:grid;place-items:center;
+    color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  .brand .logo svg{width:21px;height:21px;display:block;}
+  .brand h1{margin:0;font-size:16.5px;font-weight:700;letter-spacing:-0.01em;line-height:1.05;
+    white-space:nowrap;color:var(--ink);}
+  .brand p{margin:3px 0 0;font-family:var(--mono);font-size:10px;font-weight:500;
+    letter-spacing:0.08em;color:var(--ink-3);text-transform:uppercase;white-space:nowrap;}
 
-  /* ---------- pelat panel ---------- */
-  .panel{position:relative;max-width:880px;margin:0 auto 20px;padding:var(--pad);
-    background:var(--brushed),linear-gradient(180deg,var(--plate) 0,#15181b 100%);
-    border:1px solid var(--edge);
-    box-shadow:inset 0 1px 0 var(--bevel),0 2px 0 rgba(0,0,0,0.45),0 16px 34px rgba(0,0,0,0.3);}
-  /* baut di keempat sudut, menggantikan siku kurung */
-  .corner{position:absolute;width:10px;height:10px;border-radius:50%;pointer-events:none;
-    background:radial-gradient(circle at 34% 28%,#69737c,#39414a 55%,#1b1f23 100%);
-    box-shadow:0 1px 0 rgba(255,255,255,0.07),inset 0 0 0 1px rgba(0,0,0,0.55);}
-  .corner::after{content:'';position:absolute;left:2px;right:2px;top:50%;height:1px;
-    background:rgba(0,0,0,0.65);transform:translateY(-0.5px) rotate(38deg);}
-  .corner.tl{top:8px;left:8px;} .corner.tr{top:8px;right:8px;}
-  .corner.bl{bottom:8px;left:8px;} .corner.br{bottom:8px;right:8px;}
+  main{max-width:var(--wrap);margin:22px auto 0;padding:0 22px;}
 
-  /* judul panel = strip label melintang pelat */
-  .panel h2{display:flex;align-items:center;gap:11px;margin:calc(var(--pad) * -1) calc(var(--pad) * -1) 18px;
-    padding:12px 18px 12px 16px;background:linear-gradient(180deg,#22272c,#171b1e);
-    border-bottom:1px solid var(--edge);box-shadow:inset 0 1px 0 var(--bevel);
-    font-family:'Oswald',sans-serif;font-weight:500;font-size:12.5px;letter-spacing:0.19em;
-    text-transform:uppercase;color:#c8d0d7;}
-  .panel h2::after{content:'';flex:1;height:5px;margin-left:2px;
-    background:repeating-linear-gradient(90deg,var(--line) 0 1px,transparent 1px 7px);}
-  .panel h2 .step{display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;flex:none;
-    background:var(--ember);color:#150a02;font-weight:600;font-size:12px;letter-spacing:0;
-    box-shadow:inset 0 -2px 0 rgba(0,0,0,0.28);}
+  /* ---------- kartu ---------- */
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden;}
+  .panel h2{display:flex;align-items:center;gap:12px;margin:0;
+    padding:15px 18px;border-bottom:1px solid var(--line);
+    font-size:15px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);}
+  .panel h2 .step{width:34px;height:34px;flex:0 0 auto;border-radius:var(--radius-btn);
+    background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--accent);
+    display:grid;place-items:center;font-family:var(--mono);font-size:14px;font-weight:700;}
+  .panel .body{padding:18px;}
 
-  /* ---------- area jatuhkan berkas ---------- */
-  #dropzone{position:relative;padding:38px 16px;text-align:center;cursor:pointer;background:var(--slot);
-    border:1px solid var(--edge);outline:1px dashed #454e58;outline-offset:-9px;
-    box-shadow:inset 0 2px 10px rgba(0,0,0,0.55);transition:background .14s,outline-color .14s,border-color .14s;}
-  #dropzone b{display:block;font-family:'Oswald',sans-serif;font-weight:500;font-size:17px;
-    letter-spacing:0.3em;color:#c2ccd4;text-indent:0.3em;}
-  #dropzone small{display:block;margin-top:8px;font-size:10px;letter-spacing:0.2em;
-    text-transform:uppercase;color:#697380;}
-  #dropzone:hover,#dropzone.over{background:#0d1215;border-color:var(--ember);outline-color:var(--ember);}
-  #dropzone:hover b,#dropzone.over b{color:var(--ember-hi);}
-  #dropzone::before,#dropzone::after{content:'';position:absolute;width:11px;height:11px;pointer-events:none;
-    border:solid #454e57;border-width:0;}
-  #dropzone::before{top:5px;left:5px;border-top-width:1px;border-left-width:1px;}
-  #dropzone::after{bottom:5px;right:5px;border-bottom-width:1px;border-right-width:1px;}
+  /* ---------- area unggah ---------- */
+  #dropzone{padding:34px 18px;text-align:center;cursor:pointer;background:var(--soft);
+    border:1px dashed var(--line-2);border-radius:var(--radius);
+    transition:background .15s,border-color .15s,color .15s;}
+  #dropzone b{display:block;font-size:15px;font-weight:700;letter-spacing:0.02em;color:var(--ink);}
+  #dropzone small{display:block;margin-top:6px;font-family:var(--mono);font-size:10px;
+    letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-3);}
+  #dropzone:hover,#dropzone.over{background:var(--accent-soft);border-color:var(--accent-line);}
+  #dropzone:hover b,#dropzone.over b{color:var(--accent);}
 
   /* ---------- tabel daftar berkas ---------- */
   #file-list{overflow-x:auto;margin-top:16px;}
   #file-list:empty{margin-top:0;}
-  #file-list table{min-width:600px;}
-  table{width:100%;border-collapse:collapse;font-size:12.5px;}
-  th,td{padding:9px 11px;text-align:left;vertical-align:top;}
-  th{font-family:'Oswald',sans-serif;font-weight:500;font-size:10px;letter-spacing:0.16em;
-    text-transform:uppercase;color:#98a2ab;background:#12161a;
-    border-top:1px solid var(--line);border-bottom:2px solid var(--edge);white-space:nowrap;}
-  td{border-bottom:1px solid #1e2327;color:#cfd6db;}
-  tbody tr:last-child td,tr:last-child td{border-bottom:1px solid var(--line);}
-  #file-list tr:hover td{background:rgba(242,97,12,0.045);}
-  td .src{color:var(--spark);font-weight:500;}
-  td .ok{color:var(--ember-hi);font-weight:500;} td .warn{color:var(--spark);} td .err{color:var(--danger);}
+  #file-list table{min-width:640px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{padding:10px 12px;text-align:left;vertical-align:top;}
+  th{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:0.12em;
+    text-transform:uppercase;color:var(--ink-3);background:var(--soft);
+    border-bottom:1px solid var(--line);white-space:nowrap;}
+  td{border-bottom:1px solid var(--line);color:var(--ink-2);}
+  tr:last-child td{border-bottom:none;}
+  #file-list tr:hover td{background:var(--soft);}
+  td .src{color:var(--ink);font-weight:600;}
+  td .ok{color:var(--accent);font-weight:600;} td .warn{color:var(--warn);} td .err{color:var(--bad);}
 
   /* ---------- kendali ---------- */
   .controls{display:flex;flex-wrap:wrap;gap:16px 14px;align-items:flex-end;}
-  .controls label{display:flex;flex-direction:column;gap:7px;
-    font-family:'Oswald',sans-serif;font-size:9.5px;font-weight:500;letter-spacing:0.19em;
-    text-transform:uppercase;color:#7d878f;}
-  .controls label.wide{flex:1 1 330px;}
+  .controls label{display:flex;flex-direction:column;gap:6px;
+    font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:0.12em;
+    text-transform:uppercase;color:var(--ink-3);}
+  .controls label.wide{flex:1 1 340px;}
   .controls label.wide input{width:100%;}
-  select,input[type=number],input[type=text]{background:var(--slot);border:1px solid #272d33;color:var(--text);
-    font-family:'Barlow',sans-serif;font-size:14px;padding:10px 11px;outline:none;min-width:154px;
-    box-shadow:inset 0 2px 5px rgba(0,0,0,0.6);border-radius:0;}
-  select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
-    background-image:linear-gradient(45deg,transparent 50%,#8b959e 50%),linear-gradient(135deg,#8b959e 50%,transparent 50%);
-    background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;
-    background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
-  select:focus,input:focus{border-color:var(--ember);
-    box-shadow:inset 0 2px 5px rgba(0,0,0,0.6),inset 3px 0 0 var(--ember);}
-  input::placeholder{color:#5b646c;}
-  select option{background:#15191d;color:var(--text);}
+  select,input[type=number],input[type=text]{background:var(--soft);color:var(--ink);
+    border:1px solid var(--line);border-radius:var(--radius);
+    font-family:inherit;font-size:13.5px;padding:10px 12px;outline:none;min-width:160px;
+    transition:border-color .15s,box-shadow .15s,background .15s;}
+  select{cursor:pointer;}
+  select:focus,input:focus{border-color:var(--accent-line);background:var(--card);
+    box-shadow:0 0 0 3px var(--accent-soft);}
+  input::placeholder{color:var(--ink-4);}
+  select option{background:var(--card);color:var(--ink);}
 
-  /* tombol = sakelar pelat */
-  button{font-family:'Oswald',sans-serif;font-weight:500;letter-spacing:0.15em;text-transform:uppercase;
-    cursor:pointer;border-radius:0;color:var(--text);
-    background:linear-gradient(180deg,#2a3036,#1b2024);border:1px solid var(--edge);
-    box-shadow:inset 0 1px 0 var(--bevel),0 2px 0 #080a0c;transition:background .12s,border-color .12s,color .12s;}
-  button:hover{background:linear-gradient(180deg,#333a41,#20262b);border-color:#4c555f;}
-  button:active{transform:translateY(2px);box-shadow:inset 0 1px 0 var(--bevel);}
-  button:disabled{opacity:0.32;cursor:not-allowed;transform:none;}
-  #btn-generate{font-size:14px;letter-spacing:0.22em;padding:13px 34px;color:#180c03;
-    background:linear-gradient(180deg,#ff8a3a,#df550a);border-color:#8f3c08;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.34),inset 0 -2px 0 rgba(0,0,0,0.2),0 3px 0 #6f2f06;}
-  #btn-generate:hover:not(:disabled){background:linear-gradient(180deg,#ffa05c,#ef6512);border-color:#a2450a;}
-  #btn-generate:active:not(:disabled){transform:translateY(3px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.28);}
-  #btn-generate::before{content:'\25B8';margin-right:11px;font-size:12px;opacity:0.75;}
+  /* ---------- tombol ---------- */
+  button{font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;
+    border:1px solid var(--line);border-radius:var(--radius-btn);padding:10px 15px;
+    background:transparent;color:var(--ink-2);
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    transition:background .15s,border-color .15s,color .15s,filter .15s;}
+  button:hover{background:var(--soft);border-color:var(--line-2);color:var(--ink);}
+  button:active{transform:translateY(1px);}
+  button:disabled{opacity:0.4;cursor:not-allowed;transform:none;}
+  #btn-generate,.lamp-foot .primary{background:var(--accent);color:var(--accent-ink);
+    border-color:transparent;font-weight:700;}
+  #btn-generate:hover:not(:disabled),.lamp-foot .primary:hover{background:var(--accent);
+    color:var(--accent-ink);border-color:transparent;filter:brightness(1.06);}
+  #btn-generate{padding:11px 26px;font-size:14px;flex:0 0 auto;}
+  #btn-generate:disabled{background:var(--soft);color:var(--ink-4);border-color:var(--line);opacity:1;}
 
-  /* baris pembacaan status */
-  #status{margin-top:18px;font-size:12.5px;color:var(--text-dim);min-height:15px;}
-  #status:not(:empty){padding:11px 13px;background:var(--slot);border:1px solid var(--line);
-    border-left:3px solid currentColor;box-shadow:inset 0 2px 6px rgba(0,0,0,0.5);}
+  /* baris tindakan: status di kiri, tombol utama di kanan */
+  .actions{display:flex;align-items:center;gap:14px;margin-top:18px;padding-top:16px;
+    border-top:1px solid var(--line);}
+  #status{flex:1;min-width:0;font-size:13px;color:var(--ink-3);}
+  #status:not(:empty){padding:11px 14px;background:var(--soft);border:1px solid var(--line);
+    border-left:3px solid currentColor;border-radius:var(--radius);}
 
-  /* tombol lampiran di dalam tabel */
-  .lamp-btn,.del-btn,.row-del{font-family:'Oswald',sans-serif;font-weight:500;font-size:10px;
-    letter-spacing:0.12em;padding:5px 9px;white-space:nowrap;}
-  .lamp-btn.done{border-color:var(--ember);color:var(--ember-hi);
-    background:linear-gradient(180deg,#2e2119,#1f1712);}
-  .del-btn,.row-del{color:#a9737a;border-color:#3a2f31;background:linear-gradient(180deg,#262a2e,#1a1e21);}
-  .del-btn:hover,.row-del:hover{color:#fff;border-color:var(--danger);
-    background:linear-gradient(180deg,#8d3129,#6d241e);}
+  /* tombol di dalam tabel */
+  .lamp-btn,.del-btn,.row-del{font-size:11.5px;font-weight:600;padding:6px 11px;
+    border-radius:6px;white-space:nowrap;}
+  .lamp-btn.done{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent);}
+  .lamp-btn.done:hover{background:var(--accent-soft);color:var(--accent);filter:brightness(1.15);}
+  .del-btn,.row-del{color:var(--ink-3);}
+  .del-btn:hover,.row-del:hover{color:var(--bad);border-color:var(--bad);background:rgba(255,106,90,.1);}
 
-  /* ---------- peti data lampiran ---------- */
-  #lamp-modal{position:fixed;inset:0;background:rgba(6,8,10,0.9);z-index:70;
-    display:flex;align-items:center;justify-content:center;padding:18px;}
+  /* ---------- jendela data lampiran ---------- */
+  #lamp-modal{position:fixed;inset:0;background:rgba(6,9,13,.74);z-index:70;
+    display:flex;align-items:center;justify-content:center;padding:18px;
+    backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);}
   #lamp-modal[hidden]{display:none;}
-  .lamp-box{position:relative;width:min(1140px,100%);max-height:92vh;display:flex;flex-direction:column;
-    background:linear-gradient(180deg,var(--plate),#141719);border:1px solid var(--edge);
-    box-shadow:inset 0 1px 0 var(--bevel),0 26px 60px rgba(0,0,0,0.6);}
-  .lamp-box::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--hazard);opacity:0.8;}
-  .lamp-head{display:flex;align-items:flex-start;gap:14px;padding:17px 18px 14px;
-    background:linear-gradient(180deg,#22272c,#181c20);border-bottom:1px solid var(--edge);}
-  .lamp-head h3{font-family:'Oswald',sans-serif;font-weight:500;font-size:13px;letter-spacing:0.17em;
-    text-transform:uppercase;color:#d3dae0;margin:0 0 5px;}
-  .lamp-head .sub{font-size:11.5px;color:var(--text-dim);line-height:1.6;word-break:break-word;}
-  .lamp-x{background:transparent;border:1px solid var(--line);color:var(--text-dim);
-    font-size:13px;padding:4px 10px;margin-left:auto;flex:none;box-shadow:none;}
-  .lamp-x:hover{color:#fff;border-color:var(--danger);background:#7c2a23;}
-  .lamp-grid-wrap{overflow:auto;padding:14px 18px;flex:1;background:#101315;
-    box-shadow:inset 0 3px 10px rgba(0,0,0,0.45);}
-  #lamp-grid{width:100%;border-collapse:collapse;font-size:12px;}
-  #lamp-grid th{position:sticky;top:0;z-index:1;background:#191e22;color:#98a2ab;
-    font-family:'Oswald',sans-serif;font-weight:500;font-size:9.5px;letter-spacing:0.12em;text-transform:uppercase;
-    padding:8px 8px;border:1px solid var(--line);border-bottom:2px solid var(--edge);
-    text-align:left;min-width:96px;vertical-align:bottom;}
-  #lamp-grid td{border:1px solid #1c2125;padding:2px;vertical-align:top;background:#14181b;}
-  #lamp-grid td.rownum{font-family:'Oswald',sans-serif;color:#6f7a83;text-align:center;
-    padding:7px 4px;font-size:10.5px;min-width:30px;background:#191e22;}
-  #lamp-grid td.auto{color:var(--spark);padding:7px 8px;white-space:nowrap;font-size:11.5px;
-    background:#191510;border-color:#2c2620;}
-  #lamp-grid textarea{width:100%;min-width:104px;background:var(--slot);border:1px solid transparent;
-    color:var(--text);font-family:'Barlow',sans-serif;font-size:12px;padding:6px 7px;
-    outline:none;resize:vertical;line-height:1.45;border-radius:0;
-    box-shadow:inset 0 1px 3px rgba(0,0,0,0.5);}
-  #lamp-grid textarea:focus{border-color:var(--ember);box-shadow:inset 0 1px 3px rgba(0,0,0,0.5),inset 2px 0 0 var(--ember);}
+  .lamp-box{width:min(1160px,100%);max-height:92vh;display:flex;flex-direction:column;
+    background:var(--card);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 24px 60px rgba(0,0,0,.55);overflow:hidden;}
+  .lamp-head{display:flex;align-items:flex-start;gap:14px;padding:15px 18px;
+    border-bottom:1px solid var(--line);}
+  .lamp-head h3{margin:0 0 3px;font-size:15px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);}
+  .lamp-head .sub{font-size:12px;color:var(--ink-3);line-height:1.55;word-break:break-word;}
+  .lamp-x{margin-left:auto;flex:none;width:32px;height:32px;padding:0;font-size:13px;
+    border-radius:var(--radius-btn);color:var(--ink-3);}
+  .lamp-x:hover{color:var(--bad);border-color:var(--bad);background:rgba(255,106,90,.1);}
+  .lamp-grid-wrap{overflow:auto;padding:16px 18px;flex:1;background:var(--bg);}
+  #lamp-grid{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;}
+  #lamp-grid th{position:sticky;top:0;z-index:1;background:var(--soft);color:var(--ink-3);
+    font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;
+    padding:9px 9px;border-bottom:1px solid var(--line-2);text-align:left;
+    min-width:100px;vertical-align:bottom;}
+  #lamp-grid td{border-bottom:1px solid var(--line);padding:3px;vertical-align:top;}
+  #lamp-grid td.rownum{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);
+    text-align:center;padding:8px 4px;min-width:32px;}
+  #lamp-grid td.auto{font-family:var(--mono);font-size:11px;color:var(--accent);
+    background:rgba(194,242,74,.055);padding:8px 9px;white-space:nowrap;}
+  #lamp-grid textarea{width:100%;min-width:110px;background:var(--soft);color:var(--ink);
+    border:1px solid var(--line);border-radius:6px;
+    font-family:var(--mono);font-size:12px;padding:7px 8px;
+    outline:none;resize:vertical;line-height:1.5;transition:border-color .15s,box-shadow .15s;}
+  #lamp-grid textarea:focus{border-color:var(--accent-line);background:var(--card);
+    box-shadow:0 0 0 3px var(--accent-soft);}
   .lamp-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 18px;
-    background:linear-gradient(180deg,#1c2125,#15191c);border-top:1px solid var(--edge);}
-  .lamp-foot button{font-size:11px;padding:9px 15px;}
-  .lamp-foot .primary{color:#180c03;background:linear-gradient(180deg,#ff8a3a,#df550a);border-color:#8f3c08;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.34),0 2px 0 #6f2f06;}
-  .lamp-foot .primary:hover{background:linear-gradient(180deg,#ffa05c,#ef6512);border-color:#a2450a;}
-  /* baris 1: perkakas — pemisah — batal/simpan; baris 2: keterangan penuh */
-  .lamp-foot .spacer{flex:1;order:2;}
-  #lamp-cancel,#lamp-save{order:3;}
-  .lamp-hint{order:4;flex:1 1 100%;font-size:11px;color:var(--text-dim);line-height:1.55;
-    padding-top:2px;border-top:1px solid var(--line);margin-top:2px;}
-  .lamp-hint:empty{display:none;}
+    border-top:1px solid var(--line);background:var(--card);}
+  .lamp-foot button{font-size:12.5px;padding:9px 14px;}
+  .lamp-foot .spacer{flex:1;}
+  .lamp-hint{flex:1 1 280px;font-size:11.5px;color:var(--ink-3);line-height:1.55;}
   .lamp-periode{display:flex;align-items:center;gap:8px;
-    font-family:'Oswald',sans-serif;font-size:9.5px;font-weight:500;letter-spacing:0.15em;
-    text-transform:uppercase;color:#7d878f;}
+    font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:0.1em;
+    text-transform:uppercase;color:var(--ink-3);}
   .lamp-periode[hidden]{display:none;}
-  .lamp-periode select,.lamp-periode input{font-size:12px;padding:7px 9px;min-width:0;}
-  .lamp-periode select{min-width:118px;padding-right:28px;} .lamp-periode input{width:82px;}
+  .lamp-periode select,.lamp-periode input{font-size:12.5px;padding:8px 10px;min-width:0;}
+  .lamp-periode select{min-width:124px;} .lamp-periode input{width:86px;}
 
   ::-webkit-scrollbar{width:11px;height:11px;}
-  ::-webkit-scrollbar-track{background:#0c0f11;}
-  ::-webkit-scrollbar-thumb{background:#2e353c;border:2px solid #0c0f11;}
-  ::-webkit-scrollbar-thumb:hover{background:#3d454e;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--line-2);border:3px solid var(--bg);border-radius:8px;}
+  ::-webkit-scrollbar-thumb:hover{background:var(--ink-4);}
 
   @media (max-width:640px){
-    body{padding:0 11px 56px;}
-    header{margin:26px auto 18px;padding:14px 15px;gap:13px;}
-    header h1{font-size:21px;}
-    .panel{--pad:15px;}
-    .panel h2{font-size:11px;letter-spacing:0.15em;padding:11px 14px;}
-    .corner{width:8px;height:8px;top:6px;left:6px;}
-    .corner.tr{left:auto;right:6px;} .corner.bl{top:auto;bottom:6px;} .corner.br{top:auto;bottom:6px;left:auto;right:6px;}
+    body{font-size:14px;padding-bottom:52px;}
+    .topbar-inner{padding:11px 15px;gap:12px;}
+    .brand .logo{width:34px;height:34px;border-radius:8px;}
+    .brand h1{font-size:15px;}
+    main{margin-top:16px;padding:0 15px;}
+    .panel h2{padding:13px 14px;font-size:14px;gap:10px;}
+    .panel h2 .step{width:30px;height:30px;font-size:13px;}
+    .panel .body{padding:14px;}
+    #dropzone{padding:26px 14px;}
     .controls label,.controls label.wide{flex:1 1 100%;}
     select,input[type=number],input[type=text]{min-width:0;width:100%;}
+    .actions{flex-direction:column;align-items:stretch;}
     #btn-generate{width:100%;}
-    #dropzone{padding:30px 12px;} #dropzone b{font-size:14px;letter-spacing:0.22em;}
-    .lamp-box{max-height:96vh;} .lamp-grid-wrap{padding:9px;} .lamp-foot{padding:11px;gap:8px;}
+    .lamp-box{max-height:96vh;border-radius:8px;}
+    .lamp-grid-wrap{padding:10px;} .lamp-foot{padding:12px;gap:8px;}
     .lamp-periode{flex:1 1 100%;}
   }
 </style>
 </head>
 <body>
 
-<header>
-  <span class="dot"></span>
-  <div>
-    <h1>SKP FORGE</h1>
-    <small>Laporan Bulanan &middot; Penyuluh Pertanian</small>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5.5" y="3" width="13" height="18" rx="2.6"></rect>
+          <path d="M9 10h6"></path><path d="M9 13.5h6"></path><path d="M9 17h4"></path>
+        </svg>
+      </div>
+      <div>
+        <h1>ESCAPES</h1>
+        <p>Laporan Bulanan &middot; Penyuluh Pertanian</p>
+      </div>
+    </div>
   </div>
 </header>
 
-<div class="panel">
-  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-  <h2><span class="step">1</span> Masukkan laporan bulan lalu (.docx)</h2>
-  <div id="dropzone">
-    <b>SERET / KETUK</b>
-    <small>berkas tidak dikirim ke mana pun</small>
-  </div>
-  <input type="file" id="file-input" accept=".docx" multiple style="display:none">
-  <div id="file-list"></div>
-</div>
+<main>
 
-<div class="panel">
-  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-  <h2><span class="step">2</span> Pilih periode laporan baru</h2>
-  <div class="controls">
-    <label>JENIS
-      <select id="sel-jenis">
-        <option value="bulanan" selected>BULANAN</option>
-        <option value="triwulan">TRIWULAN</option>
-      </select>
-    </label>
-    <label id="lbl-bulan">BULAN
-      <select id="sel-bulan"></select>
-    </label>
-    <label id="lbl-triwulan" style="display:none">TRIWULAN
-      <select id="sel-triwulan">
-        <option value="0">I (JAN&ndash;MAR)</option>
-        <option value="1">II (APR&ndash;JUN)</option>
-        <option value="2">III (JUL&ndash;SEP)</option>
-        <option value="3">IV (OKT&ndash;DES)</option>
-      </select>
-    </label>
-    <label>TAHUN
-      <input type="number" id="sel-tahun" min="2024" max="2099">
-    </label>
-    <label>NAMA DESA (OPSIONAL)
-      <input type="text" id="sel-desa" placeholder="sesuai dokumen" autocomplete="off">
-    </label>
-    <label class="wide">TAUTAN DRIVE (OPSIONAL)
-      <input type="text" id="sel-link" placeholder="sesuai dokumen" autocomplete="off" spellcheck="false">
-    </label>
-    <label>VARIASI NARASI
-      <select id="sel-narasi">
-        <option value="asli">ASLI (TANPA PERUBAHAN)</option>
-        <option value="A">VARIASI A</option>
-        <option value="B">VARIASI B</option>
-        <option value="C">VARIASI C</option>
-        <option value="acak" selected>ACAK A/B/C PER FILE</option>
-      </select>
-    </label>
-    <button id="btn-generate" disabled>Buat</button>
+<section class="panel">
+  <h2><span class="step">1</span> Masukkan laporan bulan lalu (.docx)</h2>
+  <div class="body">
+    <div id="dropzone">
+      <b>Seret berkas ke sini / ketuk</b>
+      <small>berkas tidak dikirim ke mana pun</small>
+    </div>
+    <input type="file" id="file-input" accept=".docx" multiple style="display:none">
+    <div id="file-list"></div>
   </div>
-  <div id="status"></div>
-</div>
+</section>
+
+<section class="panel">
+  <h2><span class="step">2</span> Pilih periode laporan baru</h2>
+  <div class="body">
+    <div class="controls">
+      <label>JENIS
+        <select id="sel-jenis">
+          <option value="bulanan" selected>BULANAN</option>
+          <option value="triwulan">TRIWULAN</option>
+        </select>
+      </label>
+      <label id="lbl-bulan">BULAN
+        <select id="sel-bulan"></select>
+      </label>
+      <label id="lbl-triwulan" style="display:none">TRIWULAN
+        <select id="sel-triwulan">
+          <option value="0">I (JAN&ndash;MAR)</option>
+          <option value="1">II (APR&ndash;JUN)</option>
+          <option value="2">III (JUL&ndash;SEP)</option>
+          <option value="3">IV (OKT&ndash;DES)</option>
+        </select>
+      </label>
+      <label>TAHUN
+        <input type="number" id="sel-tahun" min="2024" max="2099">
+      </label>
+      <label>NAMA DESA (OPSIONAL)
+        <input type="text" id="sel-desa" placeholder="sesuai dokumen" autocomplete="off">
+      </label>
+      <label class="wide">TAUTAN DRIVE (OPSIONAL)
+        <input type="text" id="sel-link" placeholder="sesuai dokumen" autocomplete="off" spellcheck="false">
+      </label>
+      <label>VARIASI NARASI
+        <select id="sel-narasi">
+          <option value="asli">ASLI (TANPA PERUBAHAN)</option>
+          <option value="A">VARIASI A</option>
+          <option value="B">VARIASI B</option>
+          <option value="C">VARIASI C</option>
+          <option value="acak" selected>ACAK A/B/C PER FILE</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <div id="status"></div>
+      <button id="btn-generate" disabled>Buat</button>
+    </div>
+  </div>
+</section>
+
+</main>
 
 <div id="lamp-modal" hidden>
   <div class="lamp-box">
@@ -317,20 +307,19 @@
     <div class="lamp-foot">
       <button id="lamp-impor">Unggah data lampiran</button>
       <input type="file" id="lamp-impor-file" accept=".pdf,.docx,.xlsx,.csv" style="display:none">
-      <button id="lamp-add">+ BARIS</button>
-      <button id="lamp-reset">KEMBALIKAN ASLI</button>
+      <button id="lamp-add">+ Baris</button>
+      <button id="lamp-reset">Kembalikan asli</button>
       <span class="lamp-periode" id="lamp-periode" hidden>BULAN KOLOM TANGGAL
         <select id="lamp-bulan"></select>
         <input type="number" id="lamp-tahun" min="2024" max="2099">
       </span>
       <span class="lamp-hint" id="lamp-hint"></span>
       <span class="spacer"></span>
-      <button id="lamp-cancel">BATAL</button>
-      <button id="lamp-save" class="primary">SIMPAN</button>
+      <button id="lamp-cancel">Batal</button>
+      <button id="lamp-save" class="primary">Simpan</button>
     </div>
   </div>
 </div>
-
 <script>
 const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const HARI_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
