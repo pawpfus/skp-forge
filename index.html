@@ -315,7 +315,7 @@
       </div>
       <button class="lamp-x" id="lamp-close">&#10005;</button>
     </div>
-    <div class="lamp-grid-wrap"><table id="lamp-grid"></table></div>
+    <div class="lamp-grid-wrap" id="lamp-grid-wrap"><table id="lamp-grid"></table></div>
     <div class="lamp-desk">
       <label for="lamp-deskripsi">DESKRIPSI PELAKSANAAN (OPSIONAL)</label>
       <textarea id="lamp-deskripsi" rows="3" spellcheck="false"
@@ -327,6 +327,9 @@
         accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
       <button id="lamp-add">+ Baris</button>
       <button id="lamp-reset">Kembalikan asli</button>
+      <span class="lamp-periode" id="lamp-pilih" hidden>TABEL
+        <select id="lamp-tabel"></select>
+      </span>
       <span class="lamp-periode" id="lamp-periode" hidden>BULAN KOLOM TANGGAL
         <select id="lamp-bulan"></select>
         <input type="number" id="lamp-tahun" min="2024" max="2099">
@@ -516,7 +519,12 @@ const VARIAN_TIPE = [
   { key: 'irpom',  re: /Irpom|Perpompaan|Perpipaan/i,             label: 'IRPOM' },
   { key: 'kelompencapir', re: /Kelompencapir|Penderasan/i,        label: 'KELOMPENCAPIR' },
   { key: 'brigade', re: /Brigade\s+Pangan/i,                      label: 'BRIGADE PANGAN' },
-  { key: 'cpcl',   re: /CPCL/i,                                   label: 'CPCL' }
+  { key: 'cpcl',   re: /CPCL/i,                                   label: 'CPCL' },
+  // laporan statistik: dicocokkan sesudah tipe lain agar "Pangan" pada
+  // "Brigade Pangan" tidak salah tangkap
+  { key: 'statistik_horti',  re: /Hortikultura/i,                 label: 'STATISTIK HORTIKULTURA' },
+  { key: 'statistik_kebun',  re: /Perkebunan/i,                   label: 'STATISTIK PERKEBUNAN' },
+  { key: 'statistik_pangan', re: /Statistik[\s\S]*Pangan|Pangan[\s\S]*Palawija/i, label: 'STATISTIK TANAMAN PANGAN' }
 ];
 function detectTipe(name){ return VARIAN_TIPE.find(t => t.re.test(name)) || null; }
 
@@ -1209,6 +1217,265 @@ C: {
  ]
 }
 }
+,
+statistik_pangan: {
+A: {
+ lb: [
+  'Data statistik tanaman pangan merupakan dasar penetapan kebijakan produksi beras dan palawija nasional. Angka luas tanam, luas panen, dan produksi yang dikumpulkan penyuluh di tingkat kecamatan menjadi bahan baku Statistik Pertanian (SP) yang dipakai berjenjang sampai tingkat pusat, sehingga ketelitian pencatatannya menentukan mutu perencanaan pangan secara keseluruhan.',
+  'Pada {B}, pendataan SP-Padi dan SP-Palawija di wilayah Kecamatan Pitu Riawa dilaksanakan melalui kunjungan lapangan, konfirmasi kepada kelompok tani, dan pencocokan dengan catatan pertanaman penyuluh di Desa {D}, sejalan dengan Programa Penyuluhan Pertanian dan Sasaran Kinerja Pegawai Tahun berjalan.'
+ ],
+ tujuan: [
+  'Mendokumentasikan hasil pendataan luas tanam, luas panen, dan produksi padi serta palawija selama {B} di wilayah Kecamatan Pitu Riawa;',
+  'Mengidentifikasi kendala yang dihadapi dalam pengumpulan dan verifikasi data tanaman pangan beserta upaya pemecahannya;',
+  'Menyajikan rekapitulasi SP-Padi dan SP-Palawija sebagai bahan evaluasi pertanaman dan perencanaan periode berikutnya.'
+ ],
+ kesimpulan: [
+  'Pendataan statistik tanaman pangan pada {B} telah terlaksana sesuai rencana kerja dan seluruh angkanya tercatat pada tabel rekapitulasi laporan ini,',
+  'Konfirmasi silang antara catatan penyuluh, keterangan kelompok tani, dan pengamatan petak membuat angka luas tanam dan luas panen yang dilaporkan semakin mendekati keadaan sebenarnya di lapangan,',
+  'Kendala utama yang masih dijumpai adalah perbedaan pencatatan tanggal tanam di tingkat petani dan keterlambatan pelaporan panen pada petak yang jauh dari pusat desa.'
+ ],
+ saran: [
+  'Pencatatan tanggal tanam dan tanggal panen pada tingkat kelompok tani perlu dibakukan dalam satu format sederhana agar penyuluh tidak lagi merekonstruksi angka dari ingatan petani,',
+  'Kunjungan pendataan ke petak yang jauh dari pusat desa perlu dijadwalkan lebih awal pada tiap bulan agar angka panen tidak tercatat pada periode yang keliru.'
+ ],
+ masalah: [
+  ['Ketepatan Pencatatan Tanggal', 'Sebagian petani tidak mencatat tanggal tanam dan tanggal panen sehingga keterangan yang diberikan saat pendataan bersifat perkiraan.', 'Angka luas tanam dan luas panen berpotensi tergeser antarbulan, menyulitkan penyusunan pola tanam dan prakiraan produksi wilayah.'],
+  ['Jangkauan Petak Pendataan', 'Beberapa hamparan berada jauh dari pusat desa dengan akses jalan usaha tani yang terbatas, terutama pada musim hujan.', 'Pendataan pada petak tersebut terlambat sehingga rekapitulasi bulanan harus diperbaiki setelah batas waktu pelaporan.']
+ ],
+ upaya: [
+  ['Tanggal tanam dan panen tidak tercatat', 'Membagikan format catatan tanam sederhana kepada pengurus kelompok tani dan mendampingi pengisiannya pada setiap pertemuan kelompok.', 'Penyuluh Pertanian, Pengurus Kelompok Tani'],
+  ['Petak jauh terlambat didata', 'Menyusun jadwal kunjungan pendataan per hamparan sejak awal bulan dan menunjuk petani kunci sebagai penghubung data pada hamparan terjauh.', 'Penyuluh Pertanian, Petani Kunci, BPP Pitu Riawa']
+ ]
+},
+B: {
+ lb: [
+  'Statistik Pertanian tanaman pangan menjadi rujukan resmi dalam menghitung ketersediaan beras daerah. Karena angka tersebut disusun dari bawah, mulai dari petak sawah yang didata penyuluh, maka mutu data kecamatan menentukan ketepatan kebijakan penyaluran pupuk, benih, dan bantuan alat mesin pertanian pada periode berikutnya.',
+  'Pendataan pada {B} difokuskan pada pemutakhiran luas tanaman padi menurut jenis pengairan serta penelusuran realisasi palawija di seluruh wilayah binaan, termasuk Desa {D}, dengan pendekatan kunjungan hamparan dan wawancara langsung kepada petani penggarap.'
+ ],
+ tujuan: [
+  'Merekam luas tanaman padi menurut jenis pengairan serta realisasi tanam dan panen palawija selama {B};',
+  'Menelusuri sebab perbedaan antara angka sementara dan angka hasil konfirmasi lapangan beserta perbaikan yang dilakukan;',
+  'Menyediakan data tanaman pangan yang siap dipakai sebagai bahan pembinaan kelompok tani wilayah binaan BPP Pitu Riawa.'
+ ],
+ kesimpulan: [
+  'Seluruh rangkaian pendataan tanaman pangan pada {B} berjalan lancar dan hasilnya terekam pada rekapitulasi laporan ini,',
+  'Penelusuran menurut jenis pengairan membantu memisahkan hamparan berisiko kekeringan dari hamparan beririgasi teknis sehingga pembinaan dapat diarahkan lebih tepat sasaran,',
+  'Realisasi palawija masih terbatas karena sebagian besar lahan dipertahankan untuk pertanaman padi sepanjang musim yang tersedia airnya.'
+ ],
+ saran: [
+  'Data luas tanaman menurut jenis pengairan perlu diperbarui setiap awal musim agar peta risiko kekeringan wilayah binaan selalu mutakhir,',
+  'Pengenalan palawija bernilai ekonomi pada petak yang tidak terjangkau air pada musim kemarau perlu didorong agar lahan tidak dibiarkan bero.'
+ ],
+ masalah: [
+  ['Kesenjangan Angka Sementara', 'Angka sementara yang dilaporkan pada awal bulan kerap berbeda dengan hasil konfirmasi lapangan menjelang akhir bulan.', 'Rekapitulasi harus disusun ulang sehingga waktu penyuluh berkurang untuk kegiatan pembinaan teknis di lapangan.'],
+  ['Keterbatasan Realisasi Palawija', 'Petani enggan menanam palawija karena harga jual tidak stabil dan pemasarannya belum terjamin di tingkat kecamatan.', 'Angka luas tanam palawija tetap rendah sehingga penganekaragaman pangan wilayah belum berkembang sesuai harapan.']
+ ],
+ upaya: [
+  ['Perbedaan angka sementara dan akhir', 'Melakukan konfirmasi bertahap pada pertengahan bulan bersama pengurus kelompok tani sebelum angka dikunci pada akhir periode.', 'Penyuluh Pertanian, Pengurus Kelompok Tani, BPP Pitu Riawa'],
+  ['Palawija kurang diminati', 'Mempertemukan kelompok tani dengan pembeli atau penggilingan setempat serta memperkenalkan komoditas palawija yang pasarnya jelas.', 'Penyuluh Pertanian, Kelompok Tani, Dinas Pertanian']
+ ]
+},
+C: {
+ lb: [
+  'Keandalan data tanaman pangan bertumpu pada disiplin pencatatan di tingkat lapangan. Penyuluh pertanian berada pada titik paling awal rantai data tersebut, sehingga setiap kunjungan hamparan bukan sekadar pembinaan teknis melainkan juga proses pengumpulan bukti angka yang akan dipakai dalam perencanaan pangan daerah.',
+  'Kegiatan pada {B} diarahkan untuk merapikan catatan pertanaman per hamparan di Desa {D} dan sekitarnya, memverifikasi angka yang dilaporkan kelompok tani, serta menyusun rekapitulasi SP-Padi dan SP-Palawija sesuai format yang berlaku pada Kementerian Pertanian.'
+ ],
+ tujuan: [
+  'Menyusun rekapitulasi data luas tanam, panen, dan puso tanaman pangan wilayah binaan selama {B};',
+  'Memastikan angka yang dilaporkan telah diverifikasi melalui pengamatan petak dan keterangan kelompok tani;',
+  'Menyediakan bahan evaluasi pertanaman bulanan bagi BPP Pitu Riawa dan Dinas Pertanian Kabupaten Sidenreng Rappang.'
+ ],
+ kesimpulan: [
+  'Rekapitulasi statistik tanaman pangan {B} tersusun lengkap dan telah diverifikasi melalui pengamatan langsung di hamparan,',
+  'Pencatatan per hamparan yang dirapikan pada periode ini mempermudah penelusuran kembali angka apabila diperlukan pembetulan pada bulan berikutnya,',
+  'Hambatan yang tersisa berupa keterbatasan waktu penyuluh untuk menjangkau seluruh hamparan pada rentang pelaporan yang singkat.'
+ ],
+ saran: [
+  'Rekapitulasi per hamparan sebaiknya diperbarui setiap minggu agar beban pendataan tidak menumpuk pada akhir bulan,',
+  'Pelibatan pengurus kelompok tani sebagai pencatat pendamping perlu diperluas agar cakupan pendataan lebih merata di seluruh wilayah binaan.'
+ ],
+ masalah: [
+  ['Beban Waktu Pendataan', 'Rentang waktu pelaporan yang singkat harus dipakai untuk menjangkau seluruh hamparan wilayah binaan yang letaknya berjauhan.', 'Sebagian data dikumpulkan menjelang batas waktu sehingga ketelitian verifikasi tidak sebaik pendataan yang dilakukan bertahap.'],
+  ['Ketergantungan pada Satu Pencatat', 'Pencatatan masih bertumpu pada penyuluh sehingga proses terhenti apabila penyuluh berhalangan atau ada kegiatan lain yang bersamaan.', 'Kesinambungan data terganggu dan rekonstruksi angka harus dilakukan dari keterangan petani yang tidak selalu tepat.']
+ ],
+ upaya: [
+  ['Waktu pendataan terbatas', 'Membagi pendataan menjadi kunjungan mingguan per hamparan dan memakai format isian ringkas yang dapat diisi langsung di lapangan.', 'Penyuluh Pertanian, Pengurus Kelompok Tani'],
+  ['Pencatatan bertumpu pada satu orang', 'Melatih pengurus kelompok tani sebagai pencatat pendamping dan menyepakati alur penyerahan data mingguan kepada penyuluh.', 'Penyuluh Pertanian, Pengurus Kelompok Tani, BPP Pitu Riawa']
+ ]
+}
+},
+statistik_horti: {
+A: {
+ lb: [
+  'Komoditas hortikultura memiliki perputaran usaha yang cepat dan harga yang berubah dari waktu ke waktu, sehingga datanya harus dikumpulkan lebih rapat dibanding tanaman pangan. Survei Pertanian Hortikultura (SPH) menjadi alat resmi untuk merekam luas tanam, luas panen, produksi, dan harga komoditas sayuran, buah, biofarmaka, serta tanaman hias di tingkat kecamatan.',
+  'Pada {B}, pendataan SPH di wilayah Kecamatan Pitu Riawa dilaksanakan melalui kunjungan ke pekarangan, kebun, dan lahan usaha tani di Desa {D} dan sekitarnya, disertai wawancara harga jual di tingkat petani sesuai Programa Penyuluhan Pertanian dan Sasaran Kinerja Pegawai Tahun berjalan.'
+ ],
+ tujuan: [
+  'Mendokumentasikan hasil pendataan SPH-TBF, SPH-TH, SPH-BST, dan SPH-SBS selama {B} di wilayah Kecamatan Pitu Riawa;',
+  'Mengidentifikasi kendala pengumpulan data hortikultura beserta upaya pemecahan yang telah dilakukan;',
+  'Menyajikan rekapitulasi luas panen, produksi, dan harga komoditas hortikultura sebagai bahan evaluasi dan pembinaan petani.'
+ ],
+ kesimpulan: [
+  'Pendataan Survei Pertanian Hortikultura pada {B} telah terlaksana sesuai rencana kerja dan hasilnya tercatat pada tabel rekapitulasi laporan ini,',
+  'Pencatatan harga di tingkat petani yang dilakukan bersamaan dengan pendataan produksi memberi gambaran yang lebih utuh mengenai nilai usaha tani hortikultura wilayah binaan,',
+  'Kendala utama adalah pola panen hortikultura yang bertahap sehingga produksi harus ditaksir dari beberapa kali pemetikan dalam satu bulan.'
+ ],
+ saran: [
+  'Petani hortikultura perlu didampingi untuk mencatat hasil setiap kali panen agar taksiran produksi bulanan tidak lagi bergantung pada ingatan,',
+  'Pencatatan harga jual sebaiknya dilakukan pada beberapa titik penjualan agar angka harga yang dilaporkan mewakili keadaan pasar wilayah binaan.'
+ ],
+ masalah: [
+  ['Pola Panen Bertahap', 'Sayuran dan buah semusim dipanen berkali-kali dalam satu periode sehingga produksi bulanan tidak dapat diukur sekali jalan.', 'Angka produksi yang dilaporkan bersifat taksiran dan berpotensi berbeda dengan hasil yang benar-benar dijual petani.'],
+  ['Keragaman Harga Jual', 'Harga komoditas hortikultura berbeda antara penjualan di kebun, pengumpul, dan pasar sehingga sulit menetapkan satu angka wakil.', 'Nilai usaha tani yang dilaporkan kurang mencerminkan penerimaan petani yang sebenarnya pada periode tersebut.']
+ ],
+ upaya: [
+  ['Produksi sulit ditaksir', 'Membagikan format catatan panen harian sederhana kepada petani hortikultura dan mendampingi pengisiannya pada setiap kunjungan.', 'Penyuluh Pertanian, Petani Hortikultura'],
+  ['Harga berbeda antartempat', 'Mencatat harga pada beberapa titik penjualan dan memakai harga di tingkat petani sebagai angka baku pelaporan.', 'Penyuluh Pertanian, Pengumpul/Pedagang, BPP Pitu Riawa']
+ ]
+},
+B: {
+ lb: [
+  'Pengembangan hortikultura merupakan salah satu jalan meningkatkan pendapatan petani pada lahan sempit dan pekarangan. Data SPH yang tertib menjadi dasar penentuan bantuan benih, sarana pascapanen, dan pembinaan pemasaran, sehingga pengumpulannya tidak dapat dilepaskan dari kegiatan penyuluhan sehari-hari.',
+  'Kegiatan pada {B} diarahkan untuk menelusuri komoditas hortikultura yang benar-benar berproduksi di Desa {D} dan sekitarnya, memutakhirkan luas tanaman akhir bulan, serta mencatat harga jual sebagai gambaran nilai usaha tani wilayah binaan BPP Pitu Riawa.'
+ ],
+ tujuan: [
+  'Merekam komoditas hortikultura yang memiliki aktivitas tanam dan panen selama {B} di wilayah binaan;',
+  'Memisahkan komoditas yang berproduksi dari komoditas yang tercatat nihil beserta alasannya;',
+  'Menyediakan data hortikultura sebagai bahan usulan bantuan dan pembinaan pemasaran periode berikutnya.'
+ ],
+ kesimpulan: [
+  'Pendataan hortikultura pada {B} berjalan lancar dan seluruh komoditas yang berproduksi telah terekam pada rekapitulasi laporan ini,',
+  'Pemisahan komoditas berproduksi dari komoditas nihil memudahkan penetapan prioritas pembinaan dan usulan bantuan pada periode berikutnya,',
+  'Sebagian komoditas tercatat nihil karena luasannya sangat kecil, ditanam untuk kebutuhan sendiri, dan tidak masuk ke rantai penjualan.'
+ ],
+ saran: [
+  'Komoditas hortikultura pekarangan yang berskala kecil perlu tetap didata agar potensi wilayah tidak hilang dari catatan resmi,',
+  'Pembinaan pascapanen sederhana perlu diberikan pada komoditas yang produksinya sudah berkelanjutan agar mutu dan harga jualnya meningkat.'
+ ],
+ masalah: [
+  ['Skala Usaha Sangat Kecil', 'Sebagian komoditas ditanam pada pekarangan dengan luasan sangat kecil dan hasilnya dikonsumsi sendiri oleh keluarga tani.', 'Komoditas tersebut sering tidak dilaporkan sehingga potensi hortikultura wilayah binaan tampak lebih rendah dari keadaan sebenarnya.'],
+  ['Mutu Pascapanen', 'Penanganan pascapanen masih sederhana sehingga sebagian hasil mengalami penurunan mutu sebelum sampai ke pembeli.', 'Harga jual yang diterima petani rendah dan minat mengembangkan hortikultura secara serius menjadi berkurang.']
+ ],
+ upaya: [
+  ['Usaha pekarangan tidak terdata', 'Memasukkan pendataan pekarangan ke dalam kunjungan rutin dan menjelaskan manfaat pencatatan kepada keluarga tani.', 'Penyuluh Pertanian, Kelompok Wanita Tani'],
+  ['Mutu hasil menurun', 'Memberikan bimbingan sortasi, pengemasan, dan penyimpanan sederhana sesuai jenis komoditas yang diusahakan petani.', 'Penyuluh Pertanian, Petani Hortikultura, BPP Pitu Riawa']
+ ]
+},
+C: {
+ lb: [
+  'Data hortikultura yang tertib memungkinkan pemerintah membaca pergerakan pasokan sayur dan buah sampai ke tingkat kecamatan. Karena komoditas ini mudah rusak dan harganya berubah cepat, ketepatan waktu pelaporan sama pentingnya dengan ketepatan angkanya.',
+  'Pada {B}, penyuluh pertanian menelusuri seluruh titik usaha hortikultura di Desa {D} dan sekitarnya, mencatat luas panen dan produksi tiap komoditas, serta memverifikasi keterangan petani dengan pengamatan langsung di lokasi tanam.'
+ ],
+ tujuan: [
+  'Menyusun rekapitulasi luas panen, produksi, dan harga komoditas hortikultura wilayah binaan selama {B};',
+  'Memverifikasi keterangan petani melalui pengamatan langsung pada lokasi tanam;',
+  'Menyediakan bahan evaluasi perkembangan usaha hortikultura bagi BPP Pitu Riawa.'
+ ],
+ kesimpulan: [
+  'Rekapitulasi data hortikultura {B} tersusun lengkap dan telah diverifikasi melalui pengamatan langsung pada lokasi tanam,',
+  'Penelusuran titik usaha hortikultura yang dilakukan menyeluruh memperlihatkan komoditas mana yang berkembang dan mana yang mulai ditinggalkan petani,',
+  'Kendala yang tersisa adalah pencatatan produksi pada usaha yang panennya tidak terjadwal dan luasannya berpindah-pindah antarmusim.'
+ ],
+ saran: [
+  'Penelusuran titik usaha hortikultura perlu diperbarui setiap awal musim karena lokasi tanam sering berpindah mengikuti ketersediaan air,',
+  'Komoditas yang mulai ditinggalkan petani perlu ditelaah sebabnya agar pembinaan dapat diarahkan pada kendala yang sebenarnya.'
+ ],
+ masalah: [
+  ['Lokasi Tanam Berpindah', 'Petani hortikultura kerap berpindah lokasi tanam antarmusim mengikuti ketersediaan air dan kesuburan lahan.', 'Pemetaan titik usaha cepat usang sehingga sebagian lokasi terlewat pada pendataan periode berjalan.'],
+  ['Panen Tidak Terjadwal', 'Pemanenan dilakukan sesuai permintaan pembeli sehingga waktunya tidak menentu dan sulit diamati langsung oleh penyuluh.', 'Angka produksi harus disusun dari keterangan petani dengan ketelitian yang lebih rendah dibanding pengamatan langsung.']
+ ],
+ upaya: [
+  ['Titik usaha berpindah', 'Memperbarui peta titik usaha hortikultura pada setiap awal musim bersama pengurus kelompok tani.', 'Penyuluh Pertanian, Pengurus Kelompok Tani'],
+  ['Waktu panen tidak menentu', 'Menyepakati pelaporan panen melalui pesan singkat atau grup kelompok tani segera setelah pemanenan dilakukan.', 'Penyuluh Pertanian, Petani Hortikultura']
+ ]
+}
+},
+statistik_kebun: {
+A: {
+ lb: [
+  'Komoditas perkebunan rakyat memberi sumbangan besar pada pendapatan keluarga tani, terutama pada lahan kering yang tidak sesuai untuk tanaman pangan. Data luas areal, produksi, produktivitas, dan jumlah petani menjadi dasar penetapan program peremajaan, bantuan bibit, serta pengembangan hilirisasi di tingkat kabupaten.',
+  'Pada {B}, pendataan statistik perkebunan di wilayah Kecamatan Pitu Riawa dilaksanakan dengan mengacu pada Angka Tetap kabupaten, dilengkapi pendampingan hilirisasi dan konfirmasi keadaan kebun rakyat di Desa {D} dan sekitarnya, sesuai Programa Penyuluhan Pertanian dan Sasaran Kinerja Pegawai Tahun berjalan.'
+ ],
+ tujuan: [
+  'Mendokumentasikan hasil pendataan dan pendampingan hilirisasi perkebunan selama {B} di wilayah Kecamatan Pitu Riawa;',
+  'Mengidentifikasi kendala pengumpulan data statistik perkebunan beserta upaya pemecahannya;',
+  'Menyajikan rekapitulasi luas areal, produksi, produktivitas, dan jumlah petani komoditas perkebunan sebagai bahan evaluasi.'
+ ],
+ kesimpulan: [
+  'Pendataan dan pendampingan hilirisasi perkebunan pada {B} telah terlaksana sesuai rencana kerja dan hasilnya tercatat pada tabel rekapitulasi laporan ini,',
+  'Pemisahan luas areal menurut status tanaman belum menghasilkan, menghasilkan, serta tanaman tua dan rusak memperjelas komoditas mana yang perlu diprioritaskan untuk peremajaan,',
+  'Kendala utama yang ditemukan adalah pencatatan hasil panen petani yang belum rapi sehingga angka produksi masih bertumpu pada taksiran.'
+ ],
+ saran: [
+  'Pelatihan pencatatan hasil panen sederhana bagi petani perkebunan perlu difasilitasi agar angka produksi yang dilaporkan berbasis catatan, bukan ingatan,',
+  'Pendampingan hilirisasi perlu dilanjutkan pada komoditas berluas areal terbesar agar nilai tambahnya dinikmati langsung oleh petani.'
+ ],
+ masalah: [
+  ['Pencatatan Hasil Panen', 'Petani perkebunan umumnya tidak mencatat hasil panen setiap kali petik sehingga keterangan produksi yang diberikan bersifat perkiraan.', 'Angka produksi dan produktivitas yang dilaporkan berpotensi meleset sehingga perencanaan hilirisasi tidak berpijak pada data yang kuat.'],
+  ['Tanaman Tua dan Rusak', 'Sebagian areal berisi tanaman yang sudah tua atau rusak namun belum diremajakan karena keterbatasan bibit dan modal petani.', 'Produktivitas kebun menurun dari tahun ke tahun dan penerimaan petani ikut berkurang meskipun luas arealnya tetap.']
+ ],
+ upaya: [
+  ['Hasil panen tidak tercatat', 'Membagikan buku catatan panen sederhana kepada petani perkebunan dan mendampingi pengisiannya pada setiap kunjungan kebun.', 'Penyuluh Pertanian, Petani Perkebunan'],
+  ['Areal tanaman tua belum diremajakan', 'Mengusulkan bantuan bibit unggul untuk peremajaan bertahap melalui Dinas Perkebunan dan mendampingi penyusunan usulan kelompok.', 'Penyuluh Pertanian, Kelompok Tani, Dinas Perkebunan']
+ ]
+},
+B: {
+ lb: [
+  'Hilirisasi produk perkebunan menjadi arah kebijakan yang mendorong petani tidak lagi berhenti pada penjualan bahan mentah. Untuk itu diperlukan data yang menggambarkan luas areal produktif, wujud produksi, serta jumlah petani yang terlibat pada tiap komoditas sebagai dasar penetapan bentuk pendampingan yang tepat.',
+  'Kegiatan pada {B} diarahkan untuk memutakhirkan data komoditas perkebunan wilayah Kecamatan Pitu Riawa serta mendampingi kelompok tani di Desa {D} dalam memahami peluang pengolahan hasil, sesuai arahan Dinas Pertanian Kabupaten Sidenreng Rappang.'
+ ],
+ tujuan: [
+  'Merekam luas areal, wujud produksi, dan jumlah petani tiap komoditas perkebunan wilayah binaan selama {B};',
+  'Mengidentifikasi komoditas yang berpeluang dikembangkan melalui pengolahan hasil di tingkat kelompok tani;',
+  'Menyediakan data perkebunan sebagai bahan usulan program hilirisasi periode berikutnya.'
+ ],
+ kesimpulan: [
+  'Pendataan komoditas perkebunan pada {B} berjalan lancar dan seluruh angkanya terekam pada rekapitulasi laporan ini,',
+  'Data jumlah petani per komoditas memperlihatkan komoditas mana yang menopang penghidupan paling banyak keluarga tani sehingga pendampingan hilirisasi dapat diarahkan ke sana,',
+  'Pengolahan hasil di tingkat kelompok masih terbatas karena keterbatasan sarana dan pengetahuan mutu produk olahan.'
+ ],
+ saran: [
+  'Pendampingan pengolahan hasil perlu dimulai dari komoditas dengan jumlah petani terbanyak agar manfaatnya dirasakan paling luas,',
+  'Usulan sarana pengolahan sederhana perlu disiapkan sejak awal tahun agar peluang bantuan tidak terlewat oleh kelompok tani.'
+ ],
+ masalah: [
+  ['Keterbatasan Sarana Pengolahan', 'Kelompok tani belum memiliki peralatan pengolahan hasil perkebunan yang memadai sehingga hasil dijual dalam bentuk mentah.', 'Nilai tambah produk tidak dinikmati petani dan harga jual sepenuhnya ditentukan oleh pembeli di luar wilayah.'],
+  ['Pengetahuan Mutu Produk', 'Pemahaman mengenai standar mutu produk olahan perkebunan masih terbatas di tingkat kelompok tani.', 'Produk olahan yang dihasilkan sulit menembus pasar yang lebih luas sehingga usaha pengolahan berhenti pada skala rumah tangga.']
+ ],
+ upaya: [
+  ['Sarana pengolahan belum ada', 'Menyusun usulan bantuan sarana pengolahan bersama kelompok tani dan mengawal pengusulannya kepada dinas terkait.', 'Penyuluh Pertanian, Kelompok Tani, Dinas Perkebunan'],
+  ['Mutu produk olahan belum baku', 'Memberikan bimbingan standar mutu, pengemasan, dan pelabelan produk olahan sesuai komoditas yang diusahakan.', 'Penyuluh Pertanian, Kelompok Tani, BPP Pitu Riawa']
+ ]
+},
+C: {
+ lb: [
+  'Kebun rakyat di wilayah Kecamatan Pitu Riawa tersebar pada lahan kering dan tegalan yang pengelolaannya turun-temurun. Pendataan berkala diperlukan agar perubahan luas areal, peremajaan, dan alih komoditas dapat terbaca sejak dini oleh pemerintah daerah.',
+  'Pada {B}, penyuluh pertanian menelusuri keadaan kebun rakyat di Desa {D} dan sekitarnya, mencocokkan luas areal dengan Angka Tetap kabupaten, serta mencatat perubahan status tanaman pada tiap komoditas perkebunan.'
+ ],
+ tujuan: [
+  'Menyusun rekapitulasi keadaan kebun rakyat menurut komoditas dan status tanaman selama {B};',
+  'Mencocokkan data lapangan dengan Angka Tetap kabupaten dan mencatat perbedaan yang ditemukan;',
+  'Menyediakan bahan evaluasi perkembangan perkebunan rakyat bagi BPP Pitu Riawa.'
+ ],
+ kesimpulan: [
+  'Rekapitulasi keadaan kebun rakyat {B} tersusun lengkap dan telah dicocokkan dengan Angka Tetap kabupaten,',
+  'Penelusuran status tanaman memperlihatkan bagian areal yang mulai memerlukan peremajaan sehingga usulan bantuan bibit dapat disiapkan lebih awal,',
+  'Perbedaan antara data lapangan dan angka kabupaten masih dijumpai pada komoditas yang arealnya menyebar dan berbatasan dengan wilayah kecamatan lain.'
+ ],
+ saran: [
+  'Penelusuran batas areal kebun yang berbatasan dengan kecamatan lain perlu dilakukan bersama penyuluh wilayah tetangga agar tidak terjadi pencatatan ganda,',
+  'Rencana peremajaan bertahap perlu disusun bersama kelompok tani sejak areal tanaman tua teridentifikasi.'
+ ],
+ masalah: [
+  ['Batas Areal Menyebar', 'Sebagian kebun rakyat berada pada batas wilayah sehingga penetapan kecamatan pencatatnya tidak selalu jelas.', 'Berpotensi terjadi pencatatan ganda atau justru terlewat sehingga luas areal yang dilaporkan kurang tepat.'],
+  ['Peremajaan Belum Terencana', 'Peremajaan tanaman tua dilakukan sendiri-sendiri oleh petani tanpa rencana bersama di tingkat kelompok.', 'Bantuan bibit sulit disalurkan secara terarah dan penurunan produktivitas kebun berlangsung tanpa penanganan menyeluruh.']
+ ],
+ upaya: [
+  ['Batas areal tidak jelas', 'Menelusuri batas areal bersama penyuluh wilayah tetangga dan pemerintah desa serta menyepakati wilayah pencatatannya.', 'Penyuluh Pertanian, Pemerintah Desa, BPP Pitu Riawa'],
+  ['Peremajaan belum terjadwal', 'Mendampingi kelompok tani menyusun rencana peremajaan bertahap berdasarkan data areal tanaman tua yang telah didata.', 'Penyuluh Pertanian, Kelompok Tani, Dinas Perkebunan']
+ ]
+}
+}
 };
 
 const escXml = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1467,13 +1734,37 @@ function landscapeRange(xml){
            end: endP >= 0 ? endP + 6 : land.index };
 }
 
-function findLampiran(xml){
+// Tabel baku laporan (2.1 Target, 2.5 Capaian, 5.1, 5.2, 5.3) dikenali dari
+// judul kolomnya, bukan dari urutannya — tabel itu diisi oleh integrasi data,
+// bukan oleh pengguna, jadi tidak ditawarkan di editor lampiran.
+function tabelBaku(labels){
+  const t = (labels || []).join(' | ');
+  return /Indikator Target/i.test(t) || /Capaian\s*\(\s*%\s*\)/i.test(t) ||
+         (/\bAspek\b/i.test(t) && /Dampak/i.test(t)) ||
+         /Upaya Pemecahan/i.test(t) || /Jenis Output/i.test(t);
+}
+
+// Semua tabel data yang boleh disunting: tabel pada halaman lampiran
+// (landscape) didahulukan, disusul tabel data pada badan laporan — laporan
+// statistik menaruh datanya di situ, bukan di halaman lampiran.
+function daftarTabelData(xml){
   const rg = landscapeRange(xml);
-  if(!rg) return null;
-  const sec = xml.slice(rg.start, rg.end);
-  const tm = sec.match(/<w:tbl>[\s\S]*?<\/w:tbl>/);
-  if(!tm) return null;
-  const trs = [...tm[0].matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(m => m[0]);
+  const hasil = [];
+  for(const m of xml.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>/g)){
+    const o = bacaTabel(xml, m.index, m.index + m[0].length);
+    if(!o || tabelBaku(o.labels)) continue;
+    o.landscape = !!(rg && m.index >= rg.start && m.index < rg.end);
+    hasil.push(o);
+  }
+  hasil.sort((p, q) => (q.landscape ? 1 : 0) - (p.landscape ? 1 : 0));
+  hasil.forEach((o, i) => { o.idx = i; });
+  return hasil;
+}
+function findLampiran(xml){ return daftarTabelData(xml)[0] || null; }
+
+function bacaTabel(xml, tblStart, tblEnd){
+  const isi = xml.slice(tblStart, tblEnd);
+  const trs = [...isi.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(m => m[0]);
   // baris header = baris awal bertanda tblHeader atau seluruh teksnya tebal
   let head = 0;
   while(head < trs.length && (/<w:tblHeader/.test(trs[head]) || /<w:b\/>|<w:b /.test(trs[head]))) head++;
@@ -1502,15 +1793,14 @@ function findLampiran(xml){
   const hL = head ? expand(trs[head - 1]) : [];
   const labels = [];
   for(let c = 0; c < cols; c++) labels.push(hL[c] || h1[c] || ('KOLOM ' + (c + 1)));
-  // judul lampiran (paragraf "LAMPIRAN : ...") untuk ditampilkan di editor
-  const jm = sec.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
+  // judul: paragraf berisi teks terakhir sebelum tabel ("LAMPIRAN : ..." pada
+  // halaman lampiran, atau judul sub-bagian pada laporan statistik)
   let judul = '';
-  for(const p of jm){
-    const t = cellText(p);
-    if(/^LAMPIRAN\s*:/i.test(t)){ judul = unescXml(t); break; }
+  for(const p of xml.slice(0, tblStart).matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)){
+    const t = unescXml(cellText(p[0])).trim();
+    if(t) judul = t;
   }
-  return { head, cols, rows, dateCols, labels, judul,
-           tblStart: rg.start + tm.index, tblEnd: rg.start + tm.index + tm[0].length };
+  return { head, cols, rows, dateCols, labels, judul, tblStart, tblEnd };
 }
 
 // ===== BACA TEKS PDF (hasil ekspor Word) =====
@@ -2028,8 +2318,9 @@ function setCellText(tc, text){
 // tabel bertanggal: jumlah baris ditentukan periode, isi ditimpa per indeks.
 // tabel biasa: jumlah baris mengikuti editor (baris tambahan meniru baris terakhir)
 function applyLampiran(xml, lamp){
-  const f = findLampiran(xml);
-  if(!f || !lamp || !lamp.rows) return xml;
+  if(!lamp || !lamp.rows || !lamp.rows.length) return xml;
+  const f = daftarTabelData(xml)[lamp.idx || 0];
+  if(!f) return xml;
   const tbl = tulisTabel(xml.slice(f.tblStart, f.tblEnd), f.head, lamp.rows, lamp.dateCols);
   return xml.slice(0, f.tblStart) + tbl + xml.slice(f.tblEnd);
 }
@@ -2652,9 +2943,12 @@ function renderList(){
   let html = '<table><tr><th>#</th><th>FILE</th><th>BULAN ASAL</th><th>DESA</th><th>VARIASI NARASI</th>' +
     '<th>LAMPIRAN</th><th></th></tr>';
   files.forEach((f, i) => {
-    const lampSel = !f.lamp ? '<span class="warn">&mdash; (gambar)</span>'
-      : `<button class="lamp-btn${f.lamp.edited ? ' done' : ''}" data-lamp="${i}">` +
-        (f.lamp.edited ? '&#10003; DIISI (' + f.lamp.rows.length + ')' : 'ISI DATA (' + f.lamp.rows.length + ')') + '</button>';
+    const terisi = f.tabel.some(t => t.edited) || !!f.deskripsi;
+    const teks = !f.tabel.length ? 'Deskripsi'
+      : f.tabel.length > 1 ? 'Isi data (' + f.tabel.length + ' tabel)'
+      : 'Isi data (' + f.tabel[0].rows.length + ')';
+    const lampSel = `<button class="lamp-btn${terisi ? ' done' : ''}" data-lamp="${i}">` +
+      (terisi ? '&#10003; ' : '') + teks + '</button>';
     html += `<tr><td>${i + 1}</td><td>${escHtml(f.name)}</td>
       <td>${f.src ? '<span class="src">' + BULAN[f.src.mIdx].toUpperCase() + ' ' + f.src.year + '</span>'
                   : '<span class="err">TIDAK TERDETEKSI</span>'}</td>
@@ -2681,10 +2975,13 @@ async function addFiles(fileList){
       const doc = zip.file('word/document.xml');
       if(!doc){ setStatus('bukan dokumen Word yang valid: ' + file.name, 'err'); continue; }
       const xml = await doc.async('string');
-      const lamp = findLampiran(xml);
-      if(lamp){ lamp.asli = lamp.rows.map(r => r.slice()); lamp.edited = false; }
+      // semua tabel data yang boleh disunting; laporan tanpa tabel tetap
+      // punya editor untuk deskripsinya saja
+      const tabel = daftarTabelData(xml);
+      tabel.forEach(t => { t.asli = t.rows.map(r => r.slice()); t.edited = false; });
       files.push({ file, name: file.name, src: detectSource(xml, file.name),
-        tipe: detectTipe(file.name), desa: detectDesa(xml), tautan: detectTautan(xml), lamp });
+        tipe: detectTipe(file.name), desa: detectDesa(xml), tautan: detectTautan(xml),
+        tabel, lamp: tabel[0] || null, deskripsi: '' });
     } catch(e){
       setStatus('gagal membaca ' + file.name + ' — ' + (e.message || e), 'err');
     }
@@ -2704,6 +3001,7 @@ const grid = document.getElementById('lamp-grid');
 const selLampBulan = document.getElementById('lamp-bulan');
 const selLampTahun = document.getElementById('lamp-tahun');
 const deskEl = document.getElementById('lamp-deskripsi');
+const selLampTabel = document.getElementById('lamp-tabel');
 let lampIdx = -1, draft = [];
 
 BULAN.forEach((b, i) => {
@@ -2753,12 +3051,40 @@ function terapkanPeriodeDraft(lamp, per){
 
 function bukaLampiran(i){
   const f = files[i];
-  if(!f || !f.lamp) return;
+  if(!f) return;
   lampIdx = i;
-  draft = f.lamp.rows.map(r => r.slice());
-  deskEl.value = f.lamp.deskripsi || '';
-  document.getElementById('lamp-title').textContent = f.lamp.judul || 'LAMPIRAN';
+  deskEl.value = f.deskripsi || '';
   document.getElementById('lamp-sub').textContent = f.name;
+  // pemilih tabel muncul bila laporannya punya lebih dari satu tabel data
+  const pilih = document.getElementById('lamp-pilih');
+  pilih.hidden = f.tabel.length < 2;
+  if(f.tabel.length > 1){
+    selLampTabel.innerHTML = f.tabel.map((t, k) =>
+      '<option value="' + k + '">' + escHtml((t.judul || ('Tabel ' + (k + 1))).slice(0, 46)) + '</option>').join('');
+    selLampTabel.value = f.lamp.idx;
+  }
+  gambarLampiran();
+  modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
+  gambarGrid();           // saat elemennya sudah punya layout
+}
+
+// siapkan kisi + keterangan untuk tabel yang sedang dipilih
+function gambarLampiran(){
+  const f = files[lampIdx];
+  const kosong = !f.lamp;
+  document.getElementById('lamp-grid-wrap').hidden = kosong;
+  document.getElementById('lamp-title').textContent =
+    kosong ? 'DESKRIPSI PELAKSANAAN' : (f.lamp.judul || 'LAMPIRAN');
+  if(kosong){
+    draft = [];
+    document.getElementById('lamp-add').style.display = 'none';
+    document.getElementById('lamp-periode').hidden = true;
+    document.getElementById('lamp-impor').hidden = false;
+    document.getElementById('lamp-hint').textContent =
+      'laporan ini tidak punya tabel data — unggah dokumen (gambar/.pdf/.docx) untuk mengisi deskripsi, atau ketik sendiri di bawah.';
+    return;
+  }
+  draft = f.lamp.rows.map(r => r.slice());
   const auto = f.lamp.dateCols.length;
   const triwulan = selJenis.value === 'triwulan';
   document.getElementById('lamp-add').style.display = auto ? 'none' : '';
@@ -2781,8 +3107,6 @@ function bukaLampiran(i){
                            : 'kolom tanggal (kuning) mengikuti periode target otomatis. ')
             : 'unggah dokumen (gambar/.pdf/.docx/.xlsx/.csv) atau isi manual di bawah. ') +
       (nyambung ? 'Angkanya otomatis diselaraskan ke target, capaian, kesimpulan, permasalahan, upaya, dan output.' : '');
-  modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
-  gambarGrid();           // saat elemennya sudah punya layout
 }
 
 [selLampBulan, selLampTahun].forEach(el => el.addEventListener('change', () => {
@@ -2792,8 +3116,30 @@ function bukaLampiran(i){
   terapkanPeriodeDraft(files[lampIdx].lamp, { mIdx: parseInt(selLampBulan.value, 10), year: th });
   gambarGrid();
 }));
+// pindah tabel: simpan dulu suntingan tabel yang sedang tampil
+selLampTabel.addEventListener('change', () => {
+  if(lampIdx < 0) return;
+  const f = files[lampIdx];
+  simpanDraft(f);
+  f.lamp = f.tabel[parseInt(selLampTabel.value, 10)] || f.tabel[0];
+  gambarLampiran();
+  gambarGrid();
+});
+// pindahkan isi kisi ke tabel yang sedang dipilih
+function simpanDraft(f){
+  if(!f.lamp) return;
+  f.lamp.rows = draft.map(r => r.slice());
+  if(!document.getElementById('lamp-periode').hidden){
+    const th = parseInt(selLampTahun.value, 10);
+    if(th >= 2024 && th <= 2099) f.lamp.periode = { mIdx: parseInt(selLampBulan.value, 10), year: th };
+  }
+  f.lamp.edited = !!f.lamp.periode ||
+    JSON.stringify(f.lamp.rows) !== JSON.stringify(f.lamp.asli);
+}
+
 function gambarGrid(){
   const lamp = files[lampIdx].lamp;
+  if(!lamp){ grid.innerHTML = ''; return; }
   const auto = new Set(lamp.dateCols);
   let h = '<tr><th></th>' + lamp.labels.map(l => '<th>' + escHtml(l) + '</th>').join('') +
     (auto.size ? '' : '<th></th>') + '</tr>';
@@ -2873,9 +3219,12 @@ imporFile.addEventListener('change', async () => {
 });
 document.getElementById('lamp-reset').addEventListener('click', () => {
   const f = files[lampIdx];
+  deskEl.value = '';
+  f.deskripsi = '';
+  if(!f.lamp) return;
   draft = f.lamp.asli.map(r => r.slice());
   f.lamp.periode = null;
-  deskEl.value = '';
+  f.lamp.edited = false;
   if(!document.getElementById('lamp-periode').hidden && f.src){
     selLampBulan.value = f.src.mIdx;      // kembali ke bulan dokumen asal
     selLampTahun.value = f.src.year;
@@ -2883,19 +3232,16 @@ document.getElementById('lamp-reset').addEventListener('click', () => {
   gambarGrid();
 });
 document.getElementById('lamp-save').addEventListener('click', () => {
-  const lamp = files[lampIdx].lamp;
-  lamp.rows = draft.map(r => r.slice());
-  if(!document.getElementById('lamp-periode').hidden){
+  const f = files[lampIdx];
+  if(f.lamp && !document.getElementById('lamp-periode').hidden){
     const th = parseInt(selLampTahun.value, 10);
     if(!(th >= 2024 && th <= 2099)){ setStatus('tahun kolom tanggal tidak valid', 'err'); return; }
-    lamp.periode = { mIdx: parseInt(selLampBulan.value, 10), year: th };
   }
-  lamp.deskripsi = deskEl.value.trim();
-  lamp.edited = !!lamp.periode || !!lamp.deskripsi ||
-    JSON.stringify(lamp.rows) !== JSON.stringify(lamp.asli);
+  simpanDraft(f);
+  f.deskripsi = deskEl.value.trim();
   tutupLampiran();
   renderList();
-  setStatus('data lampiran disimpan.', 'ok');
+  setStatus('data laporan disimpan.', 'ok');
 });
 document.getElementById('lamp-cancel').addEventListener('click', tutupLampiran);
 document.getElementById('lamp-close').addEventListener('click', tutupLampiran);
@@ -2941,21 +3287,30 @@ btn.addEventListener('click', async () => {
     // perhitungan angkanya dikerjakan belakangan
     // bulan kolom tanggal ditetapkan dulu supaya jumlah barisnya cocok dengan
     // yang tampil di editor, baru datanya ditulis
-    const aturTanggal = (f, tundaData) =>
-      !!(f.lamp && f.lamp.edited && f.lamp.periode && f.lamp.dateCols.length && !tundaData);
+    const tabelDiisi = f => (f.tabel || []).filter(t => t.edited);
+    const aturTanggal = (f, tundaData) => !tundaData &&
+      tabelDiisi(f).some(t => t.periode && t.dateCols.length);
     const olahLampiran = (xml, f, labelPeriode, tundaData) => {
-      if(!f.lamp || !f.lamp.edited) return xml;
-      if(aturTanggal(f, tundaData)) xml = setTabelHarian(xml, f.src, f.lamp.periode);
-      xml = applyLampiran(xml, f.lamp);
-      // laporan pelaksanaan tugas & fungsi: seluruh isinya diselaraskan
-      // dengan kegiatan diseminasi yang diunggah
-      if(isTabelDiseminasi(f.lamp.labels))
-        xml = integrasiDiseminasi(xml, kegiatanDariBaris(f.lamp.rows, f.lamp.labels), labelPeriode);
-      // laporan lain: angka pada data lampiran diselaraskan ke isi laporan
-      else if(f.tipe && !tundaData)
-        xml = integrasiData(xml, f.tipe.key, f.lamp, labelPeriode, desaIn || f.desa || null);
+      const diisi = tabelDiisi(f);
+      if(!diisi.length && !f.deskripsi) return xml;
+      // seluruh tabel yang disunting ditulis balik, termasuk laporan
+      // statistik yang punya lebih dari satu tabel data
+      diisi.forEach(t => {
+        if(!tundaData && t.periode && t.dateCols.length) xml = setTabelHarian(xml, f.src, t.periode);
+        xml = applyLampiran(xml, t);
+      });
+      const utama = diisi[0];
+      if(utama){
+        // laporan pelaksanaan tugas & fungsi: seluruh isinya diselaraskan
+        // dengan kegiatan diseminasi yang diunggah
+        if(isTabelDiseminasi(utama.labels))
+          xml = integrasiDiseminasi(xml, kegiatanDariBaris(utama.rows, utama.labels), labelPeriode);
+        // laporan lain: angka pada data lampiran diselaraskan ke isi laporan
+        else if(f.tipe && !tundaData)
+          xml = integrasiData(xml, f.tipe.key, utama, labelPeriode, desaIn || f.desa || null);
+      }
       // deskripsi bebas dari editor masuk ke bagian 3 PELAKSANAAN KEGIATAN
-      if(f.lamp.deskripsi && !tundaData) xml = terapkanDeskripsi(xml, f.lamp.deskripsi);
+      if(f.deskripsi && !tundaData) xml = terapkanDeskripsi(xml, f.deskripsi);
       return xml;
     };
     // tautan Drive: teks di dokumen + Target relasi harus diganti bersamaan
@@ -3030,12 +3385,12 @@ btn.addEventListener('click', async () => {
       xml = mergeDailyRows(xml, others);
       // tabel lampiran kini berisi tiga bulan: angka pada isi laporan dihitung
       // dari tabel gabungan agar mewakili satu triwulan penuh
-      if(base.lamp && base.lamp.edited && base.tipe && !isTabelDiseminasi(base.lamp.labels)){
-        const gab = findLampiran(xml);
+      const utamaQ = tabelDiisi(base)[0];
+      if(utamaQ && base.tipe && !isTabelDiseminasi(utamaQ.labels)){
+        const gab = daftarTabelData(xml)[utamaQ.idx] || findLampiran(xml);
         if(gab) xml = integrasiData(xml, base.tipe.key, gab, labelTriwulan(q), desaIn || base.desa || null);
       }
-      if(base.lamp && base.lamp.edited && base.lamp.deskripsi)
-        xml = terapkanDeskripsi(xml, base.lamp.deskripsi);
+      if(base.deskripsi) xml = terapkanDeskripsi(xml, base.deskripsi);
       xml = await olahTautan(zip, xml, base);
       await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
         transformNameTriwulan(base.name, base.src, q));
@@ -3087,7 +3442,7 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   sisipBarisAwal, selaraskanOutput,
   detectTautan, replaceTautan, replaceTautanRels,
   narasiDariBaris, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
-  barisDariBlokOcr, bacaBerkasLampiran };
+  barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
