@@ -174,6 +174,18 @@
     outline:none;resize:vertical;line-height:1.5;transition:border-color .15s,box-shadow .15s;}
   #lamp-grid textarea:focus{border-color:var(--accent-line);background:var(--card);
     box-shadow:0 0 0 3px var(--accent-soft);}
+  .lamp-desk{padding:14px 18px;border-top:1px solid var(--line);background:var(--card);
+    display:flex;flex-direction:column;gap:7px;}
+  .lamp-desk label{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:0.12em;
+    text-transform:uppercase;color:var(--ink-3);}
+  .lamp-desk textarea{width:100%;background:var(--soft);color:var(--ink);
+    border:1px solid var(--line);border-radius:var(--radius);
+    font-family:inherit;font-size:13px;line-height:1.55;padding:10px 12px;
+    outline:none;resize:vertical;min-height:64px;
+    transition:border-color .15s,box-shadow .15s,background .15s;}
+  .lamp-desk textarea::placeholder{color:var(--ink-4);}
+  .lamp-desk textarea:focus{border-color:var(--accent-line);background:var(--card);
+    box-shadow:0 0 0 3px var(--accent-soft);}
   .lamp-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 18px;
     border-top:1px solid var(--line);background:var(--card);}
   .lamp-foot button{font-size:12.5px;padding:9px 14px;}
@@ -304,9 +316,15 @@
       <button class="lamp-x" id="lamp-close">&#10005;</button>
     </div>
     <div class="lamp-grid-wrap"><table id="lamp-grid"></table></div>
+    <div class="lamp-desk">
+      <label for="lamp-deskripsi">DESKRIPSI PELAKSANAAN (OPSIONAL)</label>
+      <textarea id="lamp-deskripsi" rows="3" spellcheck="false"
+        placeholder="Kalimat di sini ditambahkan ke bagian 3. PELAKSANAAN KEGIATAN pada laporan. Terisi sendiri dari berkas yang diunggah, boleh disunting atau diketik langsung."></textarea>
+    </div>
     <div class="lamp-foot">
-      <button id="lamp-impor">Unggah data lampiran</button>
-      <input type="file" id="lamp-impor-file" accept=".pdf,.docx,.xlsx,.csv" style="display:none">
+      <button id="lamp-impor">Unggah dokumen</button>
+      <input type="file" id="lamp-impor-file"
+        accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
       <button id="lamp-add">+ Baris</button>
       <button id="lamp-reset">Kembalikan asli</button>
       <span class="lamp-periode" id="lamp-periode" hidden>BULAN KOLOM TANGGAL
@@ -1846,28 +1864,133 @@ function barisDiseminasi(kegiatan, labels){
 
 // satu pintu impor: pilih pembaca sesuai jenis berkas, hasilkan baris tabel
 // yang sudah sejajar dengan kolom lampiran laporan tujuan
-async function bacaBerkasLampiran(file, labels){
+// ===== DESKRIPSI: kalimat naratif dari berkas yang diunggah =====
+// Baris yang panjang, banyak kata, dan didominasi huruf dianggap kalimat —
+// bukan potongan tabel, nomor, atau kop surat.
+function narasiDariBaris(baris, batas){
+  const pilih = (baris || []).map(t => String(t || '').trim()).filter(t => {
+    if(t.length < 30) return false;
+    if(t.split(/\s+/).length < 5) return false;
+    const huruf = (t.match(/[A-Za-zÀ-ÿ]/g) || []).length;
+    if(huruf / t.length < 0.6) return false;
+    // judul/kop biasanya HURUF BESAR SEMUA — kalimat isi tidak
+    const kecil = (t.match(/[a-zà-ÿ]/g) || []).length;
+    if(kecil / huruf < 0.5) return false;
+    if(/^(NIP|NAMA|WKPP|BPP|KABUPATEN|LAMPIRAN|TOTAL)\b/i.test(t)) return false;
+    return true;
+  });
+  return pilih.slice(0, batas || 8).join('\n');
+}
+
+// tabel apa adanya dari teks polos (hasil OCR): kolom dipisah jarak ganda,
+// tab, atau garis tegak. Jumlah kolom diambil dari pola yang paling sering.
+function tabelDariTeks(teks){
+  const pecah = t => t.trim().split(/ {2,}|\t+|\s*\|\s*/).map(s => s.trim()).filter(s => s !== '');
+  const cand = String(teks || '').split(/\r?\n/).map(pecah).filter(a => a.length >= 2);
+  if(cand.length < 2) return null;
+  const freq = {};
+  cand.forEach(a => { freq[a.length] = (freq[a.length] || 0) + 1; });
+  const kol = parseInt(Object.keys(freq).sort((a, b) => freq[b] - freq[a] || b - a)[0], 10);
+  const rows = cand.filter(a => Math.abs(a.length - kol) <= 1)
+    .map(a => a.length === kol ? a : a.concat(new Array(kol - a.length).fill('')));
+  return rows.length >= 2 ? rows : null;
+}
+
+// ===== OCR: baca tulisan pada foto/pindaian =====
+// Pustakanya besar (~5 MB terpakai) jadi baru diunduh saat gambar pertama
+// diunggah, lalu tersimpan di cache service worker untuk pemakaian offline.
+const RE_GAMBAR = /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i;
+let ocrDimuat = null;
+function muatOcr(){
+  if(window.Tesseract) return Promise.resolve();
+  if(ocrDimuat) return ocrDimuat;
+  ocrDimuat = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'vendor/ocr/tesseract.min.js';
+    s.onload = () => res();
+    s.onerror = () => { ocrDimuat = null; rej(new Error('pustaka OCR gagal dimuat — periksa sambungan internet')); };
+    document.head.appendChild(s);
+  });
+  return ocrDimuat;
+}
+// OCR memulangkan tiap kata beserta kotak posisinya. Jarak antar-kata yang
+// lebih lebar dari tinggi baris berarti batas kolom, bukan spasi biasa —
+// batas itu ditandai spasi ganda supaya tabelnya bisa disusun ulang.
+function barisDariBlokOcr(data){
+  const baris = [];
+  ((data && data.blocks) || []).forEach(b => (b.paragraphs || []).forEach(p => (p.lines || []).forEach(l => {
+    const kata = (l.words || []).filter(w => w.text && w.text.trim());
+    if(!kata.length) return;
+    const tinggi = l.bbox ? Math.max(l.bbox.y1 - l.bbox.y0, 8) : 16;
+    const batas = Math.max(tinggi * 0.9, 10);
+    let s = kata[0].text;
+    for(let i = 1; i < kata.length; i++)
+      s += (kata[i].bbox.x0 - kata[i - 1].bbox.x1 > batas ? '  ' : ' ') + kata[i].text;
+    baris.push(s);
+  })));
+  return baris;
+}
+async function bacaGambar(file, lapor){
+  await muatOcr();
+  const worker = await Tesseract.createWorker('ind', 1, {
+    workerPath: 'vendor/ocr/worker.min.js',
+    corePath: 'vendor/ocr/',
+    langPath: 'vendor/ocr/lang',
+    gzip: true, legacyCore: false, legacyLang: false,
+    logger: m => { if(lapor) lapor(m); }
+  });
+  try {
+    const { data } = await worker.recognize(file, {}, { blocks: true, text: true });
+    const baris = barisDariBlokOcr(data);
+    const teks = (data && data.text) || '';
+    return { teks, baris: baris.length ? baris
+      : teks.split(/\r?\n/).map(t => t.trim()).filter(t => t) };
+  } finally { await worker.terminate(); }
+}
+
+async function bacaBerkasLampiran(file, labels, lapor){
   const nama = file.name.toLowerCase();
+  if(RE_GAMBAR.test(nama)){
+    const { baris } = await bacaGambar(file, lapor);
+    if(!baris.length) throw new Error('tidak ada tulisan yang terbaca dari gambar itu');
+    const polos = baris.map(t => t.replace(/ {2,}/g, ' ').trim()).filter(t => t);
+    const keg = parseDiseminasi(polos);
+    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
+      jenis: 'kegiatan diseminasi (dari gambar)', teks: narasiDariBaris(polos) };
+    const tabel = tabelDariTeks(baris.join('\n'));
+    if(tabel){
+      const rows = petakanTabel(tabel, labels);
+      if(rows.length) return { rows, jumlah: rows.length,
+        jenis: 'baris tabel (dari gambar)', teks: narasiDariBaris(polos) };
+    }
+    return { rows: null, jumlah: polos.length, jenis: 'baris teks (dari gambar)',
+      teks: polos.join('\n') };
+  }
   if(nama.endsWith('.pdf')){
     const baris = await pdfBaris(await file.arrayBuffer());
-    if(!baris.length) throw new Error('teks PDF tidak terbaca (kemungkinan hasil pindaian/gambar) — pakai berkas Word-nya');
+    if(!baris.length) throw new Error('teks PDF tidak terbaca — kemungkinan hasil pindaian; simpan halamannya sebagai gambar (.jpg/.png) lalu unggah supaya dibaca OCR');
+    const teks = narasiDariBaris(baris);
     const keg = parseDiseminasi(baris);
-    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length, jenis: 'kegiatan diseminasi' };
-    throw new Error('isi PDF tidak dikenali sebagai Laporan Diseminasi — untuk tabel lain pakai .docx/.xlsx/.csv');
+    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
+      jenis: 'kegiatan diseminasi', teks };
+    return { rows: null, jumlah: baris.length, jenis: 'teks dokumen', teks: teks || baris.join('\n') };
   }
   if(nama.endsWith('.docx')){
     const zip = await JSZip.loadAsync(file);
     const doc = zip.file('word/document.xml');
     if(!doc) throw new Error('bukan dokumen Word yang sah');
     const xml = await doc.async('string');
+    const teks = narasiDariBaris(paraTeks(xml));
     const keg = parseDiseminasi(xml);
-    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length, jenis: 'kegiatan diseminasi' };
+    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
+      jenis: 'kegiatan diseminasi', teks };
     const tabel = tabelDariDocx(xml);
     if(tabel){
       const rows = petakanTabel(tabel, labels);
-      if(rows.length) return { rows, jumlah: rows.length, jenis: 'baris tabel' };
+      if(rows.length) return { rows, jumlah: rows.length, jenis: 'baris tabel', teks };
     }
-    throw new Error('tidak ada tabel atau kegiatan diseminasi yang terbaca dari dokumen itu');
+    if(teks) return { rows: null, jumlah: teks.split('\n').length, jenis: 'teks dokumen', teks };
+    throw new Error('tidak ada tabel, kegiatan diseminasi, atau kalimat yang terbaca dari dokumen itu');
   }
   if(nama.endsWith('.xlsx')){
     const tabel = await tabelDariXlsx(await JSZip.loadAsync(file));
@@ -1877,13 +2000,15 @@ async function bacaBerkasLampiran(file, labels){
     return { rows, jumlah: rows.length, jenis: 'baris tabel' };
   }
   if(nama.endsWith('.csv') || nama.endsWith('.txt')){
-    const tabel = tabelDariCsv(await file.text());
+    const isi = await file.text();
+    const tabel = tabelDariCsv(isi);
     if(!tabel.length) throw new Error('berkas CSV kosong');
     const rows = petakanTabel(tabel, labels);
-    if(!rows.length) throw new Error('tidak ada baris data pada CSV');
+    if(!rows.length) return { rows: null, jumlah: 0, jenis: 'teks dokumen',
+      teks: narasiDariBaris(isi.split(/\r?\n/)) };
     return { rows, jumlah: rows.length, jenis: 'baris tabel' };
   }
-  throw new Error('jenis berkas belum didukung — pakai .pdf, .docx, .xlsx, atau .csv');
+  throw new Error('jenis berkas belum didukung — pakai gambar (.jpg/.png), .pdf, .docx, .xlsx, atau .csv');
 }
 
 // tulis teks ke satu sel (paragraf pertama dipakai, sisanya dikosongkan);
@@ -2103,6 +2228,36 @@ function integrasiDiseminasi(xml, keg, labelPeriode){
     '1', 'Dokumen laporan']);
   xml = gantiTabelSetelahJudul(xml, /^5\.3\s*OUTPUT/i, output);
   return xml;
+}
+
+// ===== DESKRIPSI PELAKSANAAN: sisipkan paragraf sesudah satu judul =====
+// Paragraf terakhir bagian itu dipakai sebagai contoh format, lalu salinannya
+// diisi teks baru dan diletakkan tepat sesudahnya.
+function sisipParagrafSetelahJudul(xml, headRe, texts){
+  if(!texts || !texts.length) return xml;
+  const list = [];
+  for(const m of xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>|<w:p[^>]*\/>/g))
+    list.push({ xml: m[0], at: m.index, akhir: m.index + m[0].length, text: cellText(m[0]) });
+  const hi = list.findIndex(p => headRe.test(p.text));
+  if(hi < 0) return xml;
+  let last = null;
+  for(let i = hi + 1; i < list.length; i++){
+    const t = list[i].text;
+    if(!t) continue;
+    if(/^\d+\.\s|^\d+\.\d+\s*[A-Z]|^LAMPIRAN/i.test(t)) break;
+    last = list[i];
+  }
+  const tpl = last || list[hi];
+  const baru = texts.map(t => replaceParaText(tpl.xml, t)).join('');
+  return xml.slice(0, tpl.akhir) + baru + xml.slice(tpl.akhir);
+}
+
+// teks bebas dari editor -> paragraf di bawah "3. PELAKSANAAN KEGIATAN"
+function terapkanDeskripsi(xml, teks){
+  const paragraf = String(teks || '').split(/\n{2,}/)
+    .map(t => t.replace(/\s*\n\s*/g, ' ').trim()).filter(t => t);
+  if(!paragraf.length) return xml;
+  return sisipParagrafSetelahJudul(xml, /^3\.\s*PELAKSANAAN/i, paragraf);
 }
 
 // ===== INTEGRASI DATA LAMPIRAN KE ISI LAPORAN (selain diseminasi) =====
@@ -2548,6 +2703,7 @@ const modal = document.getElementById('lamp-modal');
 const grid = document.getElementById('lamp-grid');
 const selLampBulan = document.getElementById('lamp-bulan');
 const selLampTahun = document.getElementById('lamp-tahun');
+const deskEl = document.getElementById('lamp-deskripsi');
 let lampIdx = -1, draft = [];
 
 BULAN.forEach((b, i) => {
@@ -2600,6 +2756,7 @@ function bukaLampiran(i){
   if(!f || !f.lamp) return;
   lampIdx = i;
   draft = f.lamp.rows.map(r => r.slice());
+  deskEl.value = f.lamp.deskripsi || '';
   document.getElementById('lamp-title').textContent = f.lamp.judul || 'LAMPIRAN';
   document.getElementById('lamp-sub').textContent = f.name;
   const auto = f.lamp.dateCols.length;
@@ -2619,10 +2776,10 @@ function bukaLampiran(i){
   const nyambung = diseminasi || (f.tipe && RINGKAS[f.tipe.key]);
   document.getElementById('lamp-impor').hidden = false;
   document.getElementById('lamp-hint').textContent = diseminasi
-    ? 'unggah Laporan Diseminasi (.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
+    ? 'unggah Laporan Diseminasi (gambar/.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
     : (auto ? (aturPeriode ? 'kolom tanggal (kuning) mengikuti bulan di samping — ubah bila tabelnya untuk bulan lain. '
                            : 'kolom tanggal (kuning) mengikuti periode target otomatis. ')
-            : 'unggah data lampiran (.docx/.xlsx/.csv) atau isi manual di bawah. ') +
+            : 'unggah dokumen (gambar/.pdf/.docx/.xlsx/.csv) atau isi manual di bawah. ') +
       (nyambung ? 'Angkanya otomatis diselaraskan ke target, capaian, kesimpulan, permasalahan, upaya, dan output.' : '');
   modal.hidden = false;   // tampilkan dulu: tinggi textarea hanya terukur
   gambarGrid();           // saat elemennya sudah punya layout
@@ -2688,15 +2845,28 @@ imporFile.addEventListener('change', async () => {
   const lamp = files[lampIdx].lamp;
   try {
     hint.textContent = 'membaca ' + file.name + ' ...';
-    const hasil = await bacaBerkasLampiran(file, lamp.labels);
-    // tabel bertanggal: jumlah baris tetap mengikuti tanggal, isi ditimpa
-    draft = lamp.dateCols.length
-      ? draft.map((r, i) => hasil.rows[i]
-          ? r.map((v, c) => lamp.dateCols.includes(c) ? v : (hasil.rows[i][c] || ''))
-          : r)
-      : hasil.rows;
-    gambarGrid();
-    hint.textContent = hasil.jumlah + ' ' + hasil.jenis + ' terbaca — periksa lalu tekan SIMPAN';
+    // gambar dibaca OCR: unduhan pustaka & kemajuan pengenalan dilaporkan
+    const kabar = m => {
+      if(!m || !m.status) return;
+      const p = m.progress ? ' ' + Math.round(m.progress * 100) + '%' : '';
+      const kata = /recogniz/i.test(m.status) ? 'mengenali tulisan'
+        : /load|initializ/i.test(m.status) ? 'menyiapkan OCR' : m.status;
+      hint.textContent = kata + p + ' — ' + file.name;
+    };
+    const hasil = await bacaBerkasLampiran(file, lamp.labels, kabar);
+    if(hasil.rows && hasil.rows.length){
+      // tabel bertanggal: jumlah baris tetap mengikuti tanggal, isi ditimpa
+      draft = lamp.dateCols.length
+        ? draft.map((r, i) => hasil.rows[i]
+            ? r.map((v, c) => lamp.dateCols.includes(c) ? v : (hasil.rows[i][c] || ''))
+            : r)
+        : hasil.rows;
+      gambarGrid();
+    }
+    if(hasil.teks) deskEl.value = hasil.teks;
+    hint.textContent = hasil.jumlah + ' ' + hasil.jenis + ' terbaca' +
+      (hasil.rows && hasil.rows.length ? '' : ' — tabel tidak ikut terisi, isi manual bila perlu') +
+      (hasil.teks ? '; deskripsi ikut terisi' : '') + ' — periksa lalu tekan SIMPAN';
   } catch(e){
     hint.textContent = 'gagal: ' + (e.message || e);
   }
@@ -2705,6 +2875,7 @@ document.getElementById('lamp-reset').addEventListener('click', () => {
   const f = files[lampIdx];
   draft = f.lamp.asli.map(r => r.slice());
   f.lamp.periode = null;
+  deskEl.value = '';
   if(!document.getElementById('lamp-periode').hidden && f.src){
     selLampBulan.value = f.src.mIdx;      // kembali ke bulan dokumen asal
     selLampTahun.value = f.src.year;
@@ -2719,7 +2890,9 @@ document.getElementById('lamp-save').addEventListener('click', () => {
     if(!(th >= 2024 && th <= 2099)){ setStatus('tahun kolom tanggal tidak valid', 'err'); return; }
     lamp.periode = { mIdx: parseInt(selLampBulan.value, 10), year: th };
   }
-  lamp.edited = !!lamp.periode || JSON.stringify(lamp.rows) !== JSON.stringify(lamp.asli);
+  lamp.deskripsi = deskEl.value.trim();
+  lamp.edited = !!lamp.periode || !!lamp.deskripsi ||
+    JSON.stringify(lamp.rows) !== JSON.stringify(lamp.asli);
   tutupLampiran();
   renderList();
   setStatus('data lampiran disimpan.', 'ok');
@@ -2781,6 +2954,8 @@ btn.addEventListener('click', async () => {
       // laporan lain: angka pada data lampiran diselaraskan ke isi laporan
       else if(f.tipe && !tundaData)
         xml = integrasiData(xml, f.tipe.key, f.lamp, labelPeriode, desaIn || f.desa || null);
+      // deskripsi bebas dari editor masuk ke bagian 3 PELAKSANAAN KEGIATAN
+      if(f.lamp.deskripsi && !tundaData) xml = terapkanDeskripsi(xml, f.lamp.deskripsi);
       return xml;
     };
     // tautan Drive: teks di dokumen + Target relasi harus diganti bersamaan
@@ -2859,6 +3034,8 @@ btn.addEventListener('click', async () => {
         const gab = findLampiran(xml);
         if(gab) xml = integrasiData(xml, base.tipe.key, gab, labelTriwulan(q), desaIn || base.desa || null);
       }
+      if(base.lamp && base.lamp.edited && base.lamp.deskripsi)
+        xml = terapkanDeskripsi(xml, base.lamp.deskripsi);
       xml = await olahTautan(zip, xml, base);
       await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
         transformNameTriwulan(base.name, base.src, q));
@@ -2908,7 +3085,9 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   gantiTabelSetelahJudul, gantiParagrafSetelahJudul, tulisTabel, setTabelHarian,
   integrasiData, RINGKAS, angkaId, fmtId, bacaTabelSetelahJudul, selaraskanBaris,
   sisipBarisAwal, selaraskanOutput,
-  detectTautan, replaceTautan, replaceTautanRels };
+  detectTautan, replaceTautan, replaceTautanRels,
+  narasiDariBaris, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
+  barisDariBlokOcr, bacaBerkasLampiran };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
