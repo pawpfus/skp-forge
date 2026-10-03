@@ -2609,7 +2609,8 @@ function applyLampiran(xml, lamp){
 // ===== LAMPIRAN GAMBAR =====
 // Sebagian laporan perlu melampirkan foto kegiatan. Berkasnya dimasukkan ke
 // word/media, didaftarkan pada relasi dokumen dan [Content_Types].xml, lalu
-// dirujuk paragraf <w:drawing> baru pada halaman lampiran paling akhir.
+// dirujuk paragraf <w:drawing> baru pada HALAMAN LAMPIRAN yang sudah ada —
+// bagian landscape di tiap laporan — bukan halaman baru di ujung dokumen.
 const EMU_TWIP = 635;                 // 1 twip = 635 EMU
 const NS_DRAW = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const NS_PIC = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
@@ -2639,16 +2640,31 @@ async function siapkanGambar(file){
   return { blob, ext: 'png', ukuran: { w: kanvas.width, h: kanvas.height } };
 }
 
-// ruang teks pada tata halaman bagian terakhir dokumen (EMU)
-function ruangHalaman(xml){
-  const semua = [...xml.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)];
-  const s = semua.length ? semua[semua.length - 1][0] : '';
-  const n = (re, bak) => { const m = s.match(re); return m ? parseInt(m[1], 10) : bak; };
+// ruang teks satu bagian dokumen, dalam twip
+function ruangSect(sect){
+  const n = (re, bak) => { const m = String(sect || '').match(re); return m ? parseInt(m[1], 10) : bak; };
   const lebar = n(/<w:pgSz[^>]*\sw:w="(\d+)"/, 11907) -
     n(/<w:pgMar[^>]*\sw:left="(\d+)"/, 1418) - n(/<w:pgMar[^>]*\sw:right="(\d+)"/, 1275);
   const tinggi = n(/<w:pgSz[^>]*\sw:h="(\d+)"/, 16840) -
     n(/<w:pgMar[^>]*\sw:top="(\d+)"/, 1276) - n(/<w:pgMar[^>]*\sw:bottom="(\d+)"/, 1276);
-  return { lebar: Math.max(lebar, 2000) * EMU_TWIP, tinggi: Math.max(tinggi, 2000) * EMU_TWIP };
+  return { lebar: Math.max(lebar, 2000), tinggi: Math.max(tinggi, 2000) };
+}
+
+// Tempat gambar lampiran dititipkan. Tiap laporan punya bagian landscape
+// sebagai halaman lampiran; sectPr bagian itu menumpang paragraf terakhirnya,
+// jadi gambar disisipkan tepat sebelum paragraf tersebut — masih di dalam
+// halaman lampiran, tanpa halaman baru. Dokumen tanpa bagian landscape
+// (bentuk lama) tetap dilayani: gambarnya ditaruh di ujung badan dokumen.
+function titikLampiran(xml){
+  const sects = [...xml.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)];
+  const land = sects.find(s => /w:orient="landscape"/.test(s[0]));
+  if(land){
+    const p = Math.max(xml.lastIndexOf('<w:p ', land.index), xml.lastIndexOf('<w:p>', land.index));
+    if(p >= 0) return { pos: p, sect: land[0], landscape: true };
+  }
+  const akhir = sects.length ? sects[sects.length - 1] : null;
+  const pos = akhir ? akhir.index : xml.lastIndexOf('</w:body>');
+  return { pos: pos < 0 ? xml.length : pos, sect: akhir ? akhir[0] : '', landscape: false };
 }
 
 const PATAH_HALAMAN = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
@@ -2676,6 +2692,26 @@ function paraGambar(rid, id, nama, cx, cy){
     '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
 }
 
+// Dua gambar sebaris pada halaman lampiran yang lebar (landscape). Tabelnya
+// tanpa garis — hanya dipakai sebagai kisi penata, bukan tabel data.
+function kisiGambar(sel, lebarKolom){
+  const KOL = 2;
+  const grid = new Array(KOL).fill('<w:gridCol w:w="' + lebarKolom + '"/>').join('');
+  const tc = isi => '<w:tc><w:tcPr><w:tcW w:w="' + lebarKolom + '" w:type="dxa"/>' +
+    '<w:vAlign w:val="center"/></w:tcPr>' + (isi || '<w:p/>') + '</w:tc>';
+  let baris = '';
+  for(let i = 0; i < sel.length; i += KOL){
+    let tr = '';
+    for(let k = 0; k < KOL; k++) tr += tc(sel[i + k]);
+    baris += '<w:tr>' + tr + '</w:tr>';
+  }
+  return '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/>' +
+    '<w:tblBorders>' + ['top','left','bottom','right','insideH','insideV']
+      .map(s => '<w:' + s + ' w:val="none" w:sz="0" w:space="0" w:color="auto"/>').join('') +
+    '</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr>' +
+    '<w:tblGrid>' + grid + '</w:tblGrid>' + baris + '</w:tbl>';
+}
+
 // nama berkas kamera (IMG_2026…, DSC01234, 20260915_151521) tidak bermakna
 // sebagai keterangan gambar, jadi dibiarkan kosong
 const RE_NAMA_KAMERA = /^(img|dsc|dscn|pxl|photo|foto|image|gambar|screenshot|whatsapp(\s*image)?)[\s_-]*[\d\s_.:-]*$/i;
@@ -2698,10 +2734,13 @@ async function sisipGambarLampiran(zip, xml, gambar, judul){
   let noMedia = Math.max(0, ...Object.keys(zip.files)
     .map(n => (n.match(/^word\/media\/\D*(\d+)\.\w+$/) || [])[1]).filter(v => v).map(Number));
   const idAwal = Math.max(900, ...[...xml.matchAll(/<wp:docPr\s+id="(\d+)"/g)].map(m => parseInt(m[1], 10)));
-  const ruang = ruangHalaman(xml);
-  const tinggiMaks = Math.round(ruang.tinggi * 0.42);   // kira-kira dua foto sehalaman
-  let isi = PATAH_HALAMAN + paraJudulLampiran(judul || 'LAMPIRAN : DOKUMENTASI KEGIATAN');
-  const relBaru = [];
+  const titik = titikLampiran(xml);
+  const ruang = ruangSect(titik.sect);
+  // halaman lampiran yang lebar diisi dua gambar sebaris; halaman tegak satu
+  const lebarKolom = titik.landscape ? Math.floor(ruang.lebar / 2) : ruang.lebar;
+  const lebarMaks = (titik.landscape ? lebarKolom - 300 : lebarKolom) * EMU_TWIP;
+  const tinggiMaks = Math.round(ruang.tinggi * (titik.landscape ? 0.4 : 0.42)) * EMU_TWIP;
+  const relBaru = [], sel = [];
   for(let i = 0; i < gambar.length; i++){
     const g = await siapkanGambar(gambar[i]);
     const berkas = 'escapes' + (++noMedia) + '.' + g.ext;
@@ -2715,17 +2754,20 @@ async function sisipGambarLampiran(zip, xml, gambar, judul){
                                  : ct.replace('</Types>', baru + '</Types>');
     }
     const u = g.ukuran || { w: 4, h: 3 };
-    let cx = ruang.lebar, cy = Math.round(cx * u.h / u.w);
+    let cx = lebarMaks, cy = Math.round(cx * u.h / u.w);
     if(cy > tinggiMaks){ cy = tinggiMaks; cx = Math.round(cy * u.w / u.h); }
-    isi += paraGambar(rid, idAwal + 1 + i, gambar[i].name, cx, cy);
     const ket = keteranganGambar(gambar[i].name);
-    isi += ket ? paraKeterangan(ket) : '<w:p/>';
+    sel.push(paraGambar(rid, idAwal + 1 + i, gambar[i].name, cx, cy) +
+      (ket ? paraKeterangan(ket) : '<w:p/>'));
   }
   zip.file(relPath, rels.replace('</Relationships>', relBaru.join('') + '</Relationships>'));
   zip.file('[Content_Types].xml', ct);
-  // disisipkan sebelum sectPr penutup supaya mengikuti tata halaman terakhir
-  const i = xml.lastIndexOf('<w:sectPr');
-  return i < 0 ? xml.replace('</w:body>', isi + '</w:body>') : xml.slice(0, i) + isi + xml.slice(i);
+  // judul selalu mendahului supaya tabel kisi tidak berdempet (lalu menyatu)
+  // dengan tabel lampiran yang sudah ada di halaman itu
+  const isi = (titik.landscape ? '' : PATAH_HALAMAN) +
+    paraJudulLampiran(judul || 'DOKUMENTASI KEGIATAN') +
+    (titik.landscape ? kisiGambar(sel, lebarKolom) : sel.join(''));
+  return xml.slice(0, titik.pos) + isi + xml.slice(titik.pos);
 }
 
 // ===== penulis tabel & paragraf umum (dipakai integrasi diseminasi) =====
@@ -3444,7 +3486,7 @@ fotoFile.addEventListener('change', async () => {
   }
   gambarDaftarFoto();
   hint.textContent = (tolak.length ? 'tidak bisa dibaca sebagai gambar: ' + tolak.join(', ') + '. ' : '') +
-    (fotoDraft.length ? fotoDraft.length + ' gambar akan dilampirkan pada halaman terakhir laporan — tekan SIMPAN'
+    (fotoDraft.length ? fotoDraft.length + ' gambar akan disisipkan di halaman lampiran laporan — tekan SIMPAN'
                       : 'belum ada gambar yang terpilih');
 });
 
@@ -3923,7 +3965,7 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   narasiDariBaris, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
   barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
   objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
-  ruangHalaman, keteranganGambar, siapkanGambar, ukuranGambar,
+  ruangSect, titikLampiran, kisiGambar, keteranganGambar, siapkanGambar, ukuranGambar,
   bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
   hurufKolom, angka2 };
 
