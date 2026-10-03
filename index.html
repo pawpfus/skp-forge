@@ -2078,7 +2078,7 @@ async function tabelDariXlsx(zip){
   const rows = [];
   for(const row of sheet.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)){
     const sel = [];
-    for(const c of row[1].matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)){
+    for(const c of row[1].matchAll(/<c\s((?:[^>\/]|\/(?!>))*)>([\s\S]*?)<\/c>/g)){
       const ref = (c[1].match(/r="([A-Z]+\d+)"/) || [])[1];
       const tipe = (c[1].match(/t="([^"]+)"/) || [])[1];
       const v = (c[2].match(/<v>([\s\S]*?)<\/v>/) || [])[1];
@@ -2091,6 +2091,147 @@ async function tabelDariXlsx(zip){
     rows.push(sel);
   }
   return rows.filter(r => r.some(v => String(v).trim())).length ? rows : null;
+}
+
+// ===== MODEL BUKU HARIAN LTT ("LAPORAN LUAS OLAH LAHAN DAN TANAM") =====
+// Buku kerja harian LTT tidak berbentuk tabel biasa: hari 1–31 menjadi kolom
+// F..AJ, tiap desa menempati satu blok baris (sel kolom B digabung sepanjang
+// bloknya), dan di dalam blok ada tiga kelompok JENIS LTT berurutan —
+// Reguler, Oplah Rawa, Oplah Non Rawa — masing-masing dengan baris
+// OLAH LAHAN / LTT / PANEN. Yang dipakai laporan adalah baris LTT.
+const hurufKolom = i => {              // 0 -> "A", 5 -> "F", 35 -> "AJ"
+  let n = i + 1, s = '';
+  while(n > 0){ s = String.fromCharCode(65 + (n - 1) % 26) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+};
+const angka2 = n => {
+  const [a, b] = n.toFixed(2).split('.');
+  return a.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + b;
+};
+
+// seluruh lembar: nilai sel per rujukan + daftar sel gabung
+async function bukuXlsx(zip){
+  const shared = [];
+  const ss = zip.file('xl/sharedStrings.xml');
+  if(ss){
+    const x = await ss.async('string');
+    for(const si of x.matchAll(/<si>([\s\S]*?)<\/si>/g))
+      shared.push(unescXml([...si[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(q => q[1]).join('')));
+  }
+  const peta = {};
+  const relf = zip.file('xl/_rels/workbook.xml.rels');
+  if(relf) for(const m of (await relf.async('string')).matchAll(/Id="([^"]+)"[^>]*?Target="([^"]+)"/g))
+    peta[m[1]] = 'xl/' + m[2].replace(/^\/?xl\//, '').replace(/^\//, '');
+  const daftar = [];
+  const wbf = zip.file('xl/workbook.xml');
+  if(wbf) for(const m of (await wbf.async('string')).matchAll(/<sheet[^>]*?name="([^"]*)"[^>]*?r:id="([^"]*)"/g))
+    daftar.push({ nama: unescXml(m[1]), path: peta[m[2]] });
+  if(!daftar.length) Object.keys(zip.files)
+    .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort()
+    .forEach((p, i) => daftar.push({ nama: 'Lembar ' + (i + 1), path: p }));
+  const hasil = [];
+  for(const s of daftar){
+    const f = s.path && zip.file(s.path);
+    if(!f) continue;
+    const xml = await f.async('string');
+    const sel = {};
+    // hanya <c ...> berisi nilai: spasi wajib sesudah "<c" supaya <cols> tidak
+    // ikut tertangkap, dan "/" hanya boleh bila bukan penutup sendiri —
+    // sel kosong <c .../> tidak punya nilai jadi memang dilewati
+    for(const c of xml.matchAll(/<c\s((?:[^>\/]|\/(?!>))*)>([\s\S]*?)<\/c>/g)){
+      const ref = (c[1].match(/r="([A-Z]+\d+)"/) || [])[1];
+      if(!ref) continue;
+      const tipe = (c[1].match(/t="([^"]+)"/) || [])[1];
+      const v = (c[2].match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+      const isT = (c[2].match(/<t[^>]*>([\s\S]*?)<\/t>/) || [])[1];
+      let teks = isT !== undefined ? unescXml(isT) : (v === undefined ? '' : v);
+      if(tipe === 's' && v !== undefined) teks = shared[parseInt(v, 10)] || '';
+      sel[ref] = teks;
+    }
+    hasil.push({ nama: s.nama, sel,
+      gabung: [...xml.matchAll(/<mergeCell[^>]*ref="([^"]+)"/g)].map(m => m[1]) });
+  }
+  return hasil;
+}
+
+const lembarLtt = lb => {
+  const kepala = Object.keys(lb.sel).filter(r => parseInt(r.replace(/\D/g, ''), 10) <= 6)
+    .map(r => String(lb.sel[r])).join(' ').toUpperCase();
+  return /LUAS OLAH LAHAN DAN TANAM/.test(kepala) && /JENIS LTT/.test(kepala);
+};
+
+// blok desa: satu sel kolom B digabung sepanjang baris bloknya
+function blokDesaLtt(lb){
+  const blok = [];
+  lb.gabung.forEach(g => {
+    const m = g.match(/^B(\d+):B(\d+)$/);
+    if(!m) return;
+    const nama = String(lb.sel['B' + m[1]] || '').trim();
+    if(nama && parseInt(m[1], 10) > 5)          // lewati sel gabung baris kepala
+      blok.push({ nama, dari: parseInt(m[1], 10), sampai: parseInt(m[2], 10) });
+  });
+  if(!blok.length){                     // tanpa sel gabung: tiap B berisi teks = awal blok
+    const baris = Object.keys(lb.sel).filter(r => /^B\d+$/.test(r) && String(lb.sel[r]).trim())
+      .map(r => parseInt(r.slice(1), 10)).filter(n => n > 5).sort((a, b) => a - b);
+    baris.forEach((n, i) => blok.push({ nama: String(lb.sel['B' + n]).trim(),
+      dari: n, sampai: baris[i + 1] ? baris[i + 1] - 1 : n + 24 }));
+  }
+  return blok.sort((a, b) => a.dari - b.dari);
+}
+
+// nilai harian baris LTT tiap kelompok dalam satu blok desa
+function harianLtt(lb, blok, hari){
+  const barisLtt = [];
+  for(let r = blok.dari; r <= blok.sampai; r++)
+    if(/^LTT$/i.test(String(lb.sel['E' + r] || '').trim())) barisLtt.push(r);
+  if(!barisLtt.length) return null;
+  const ambil = (r, d) => {
+    if(!r) return 0;
+    const v = lb.sel[hurufKolom(5 + d - 1) + r];     // kolom F = hari ke-1
+    if(v === undefined || v === '') return 0;
+    const n = parseFloat(String(v).replace(',', '.'));
+    return isFinite(n) ? n : 0;
+  };
+  const out = [];
+  for(let d = 1; d <= hari; d++)
+    out.push([ambil(barisLtt[0], d), ambil(barisLtt[1], d), ambil(barisLtt[2], d)]);
+  return out;
+}
+
+async function tabelDariBukuLtt(zip, ctx){
+  const buku = await bukuXlsx(zip);
+  const lembar = buku.filter(lembarLtt);
+  if(!lembar.length) return null;                     // bukan buku harian LTT
+  const per = (ctx && ctx.periode) || null;
+  if(!per) throw new Error('bulan tabel belum ditentukan — pilih dulu BULAN KOLOM TANGGAL');
+  const bulan = BULAN[per.mIdx].toUpperCase();
+  const pilih = lembar.find(l => l.nama.toUpperCase().indexOf(bulan) >= 0);
+  if(!pilih) throw new Error('buku harian LTT terbaca, tetapi tidak ada lembar ' + BULAN[per.mIdx] +
+    ' — lembar yang tersedia: ' + lembar.map(l => l.nama).join(', '));
+  const blok = blokDesaLtt(pilih);
+  const desa = ctx && ctx.desa ? String(ctx.desa).toUpperCase() : '';
+  const b = desa ? blok.find(x => x.nama.toUpperCase().indexOf(desa) >= 0) : null;
+  if(!b) throw new Error('desa ' + (ctx && ctx.desa ? ctx.desa : '(belum terdeteksi)') +
+    ' tidak ada pada lembar ' + pilih.nama + ' — desa pada buku: ' +
+    blok.map(x => x.nama).join(', '));
+  const hari = lastDay(per.year, per.mIdx);
+  const nilai = harianLtt(pilih, b, hari);
+  if(!nilai) throw new Error('baris LTT tidak ditemukan pada blok ' + b.nama);
+  return { nilai, lembar: pilih.nama, desa: b.nama, hari };
+}
+
+// nilai harian -> baris tabel lampiran, mengikuti urutan kolom laporan
+function barisLampiranLtt(nilai, labels){
+  const cari = re => labels.findIndex(l => re.test(l));
+  const iKeg = cari(/kegiatan/i);
+  const kol = [cari(/reguler/i), cari(/oplah\s*rawa|rawa\s*\//i), cari(/non\s*rawa/i)];
+  if(kol[0] < 0) return null;
+  return nilai.map(h => {
+    const r = new Array(labels.length).fill('');
+    if(iKeg >= 0) r[iKeg] = 'Tanam';
+    kol.forEach((c, k) => { if(c >= 0) r[c] = angka2(h[k]); });
+    return r;
+  });
 }
 
 function tabelDariCsv(teks){
@@ -2238,7 +2379,9 @@ async function bacaGambar(file, lapor){
   } finally { await worker.terminate(); }
 }
 
-async function bacaBerkasLampiran(file, labels, lapor){
+// ctx: { desa, periode } — dipakai pembaca yang butuh konteks laporan,
+// misalnya buku harian LTT yang satu berkasnya memuat banyak bulan & desa
+async function bacaBerkasLampiran(file, labels, lapor, ctx){
   const nama = file.name.toLowerCase();
   if(RE_GAMBAR.test(nama)){
     const { baris } = await bacaGambar(file, lapor);
@@ -2283,7 +2426,17 @@ async function bacaBerkasLampiran(file, labels, lapor){
     throw new Error('tidak ada tabel, kegiatan diseminasi, atau kalimat yang terbaca dari dokumen itu');
   }
   if(nama.endsWith('.xlsx')){
-    const tabel = await tabelDariXlsx(await JSZip.loadAsync(file));
+    const zip = await JSZip.loadAsync(file);
+    // buku harian LTT berbentuk menyilang — dikenali dan dibaca tersendiri
+    if(labels.some(l => /reguler/i.test(l)) && labels.some(l => /oplah/i.test(l))){
+      const h = await tabelDariBukuLtt(zip, ctx);
+      if(h){
+        const rows = barisLampiranLtt(h.nilai, labels);
+        if(rows) return { rows, jumlah: rows.length, hari: h.hari,
+          jenis: 'hari dari buku harian LTT (lembar ' + h.lembar + ', ' + h.desa + ')' };
+      }
+    }
+    const tabel = await tabelDariXlsx(zip);
     if(!tabel) throw new Error('lembar kerja kosong atau tidak terbaca');
     const rows = petakanTabel(tabel, labels);
     if(!rows.length) throw new Error('tidak ada baris data pada lembar pertama');
@@ -3137,6 +3290,26 @@ function simpanDraft(f){
     JSON.stringify(f.lamp.rows) !== JSON.stringify(f.lamp.asli);
 }
 
+// Baris penutup "TOTAL BULAN INI" dijumlahkan ulang dari baris harian.
+// Sel pertamanya menggabungkan beberapa kolom, jadi jumlah selnya lebih
+// sedikit — selisih itu dipakai sebagai pergeseran indeks kolom.
+function perbaruiBarisTotal(rows, dateCols){
+  if(rows.length < 2) return;
+  const akhir = rows[rows.length - 1];
+  if(!/total/i.test(String(akhir[0] || ''))) return;
+  const data = rows.slice(0, -1);
+  const geser = data[0].length - akhir.length;
+  if(geser < 0) return;
+  for(let c = 0; c < data[0].length; c++){
+    if(dateCols.indexOf(c) >= 0) continue;
+    const t = c - geser;
+    if(t <= 0 || t >= akhir.length) continue;
+    let jml = 0, ada = false;
+    data.forEach(r => { const n = angkaId(r[c]); if(n !== null){ jml += n; ada = true; } });
+    if(ada) akhir[t] = angka2(jml);
+  }
+}
+
 function gambarGrid(){
   const lamp = files[lampIdx].lamp;
   if(!lamp){ grid.innerHTML = ''; return; }
@@ -3199,7 +3372,12 @@ imporFile.addEventListener('change', async () => {
         : /load|initializ/i.test(m.status) ? 'menyiapkan OCR' : m.status;
       hint.textContent = kata + p + ' — ' + file.name;
     };
-    const hasil = await bacaBerkasLampiran(file, lamp.labels, kabar);
+    const f = files[lampIdx];
+    const ctx = { desa: document.getElementById('sel-desa').value.trim() || f.desa,
+      periode: (lamp.dateCols.length && !document.getElementById('lamp-periode').hidden)
+        ? { mIdx: parseInt(selLampBulan.value, 10), year: parseInt(selLampTahun.value, 10) }
+        : (lamp.periode || periodeTarget()) };
+    const hasil = await bacaBerkasLampiran(file, lamp.labels, kabar, ctx);
     if(hasil.rows && hasil.rows.length){
       // tabel bertanggal: jumlah baris tetap mengikuti tanggal, isi ditimpa
       draft = lamp.dateCols.length
@@ -3207,6 +3385,7 @@ imporFile.addEventListener('change', async () => {
             ? r.map((v, c) => lamp.dateCols.includes(c) ? v : (hasil.rows[i][c] || ''))
             : r)
         : hasil.rows;
+      if(lamp.dateCols.length) perbaruiBarisTotal(draft, lamp.dateCols);
       gambarGrid();
     }
     if(hasil.teks) deskEl.value = hasil.teks;
@@ -3442,7 +3621,9 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   sisipBarisAwal, selaraskanOutput,
   detectTautan, replaceTautan, replaceTautanRels,
   narasiDariBaris, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
-  barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel };
+  barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
+  bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
+  hurufKolom, angka2 };
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(() => {});
