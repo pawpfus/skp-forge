@@ -1580,36 +1580,10 @@ function replaceTautanRels(rels, from, to){
     (utuh, t) => unescXml(t) === from ? 'Target="' + escXml(to) + '"' : utuh);
 }
 
-// ===== LAPORAN TRIWULAN: gabung tabel harian + label periode =====
+// ===== LAPORAN TRIWULAN: label periode =====
+// (penggabungan isi lampiran ada di gabungLampiranTriwulan, di bawah)
 const ROMAWI = ['I', 'II', 'III', 'IV'];
 const labelTriwulan = q => 'Triwulan ' + ROMAWI[q.qIdx] + ' Tahun ' + q.year;
-
-// rentang baris <w:tr> pertama s/d terakhir yang memuat tanggal dd/mm/yyyy
-function dailyRowSpan(xml){
-  const re = /\d{2}\/\d{2}\/\d{4}/g;
-  let first = -1, last = -1, m;
-  while((m = re.exec(xml))){ if(first < 0) first = m.index; last = m.index; }
-  if(first < 0) return null;
-  let start = first;
-  while((start = xml.lastIndexOf('<w:tr', start - 1)) >= 0){
-    const c = xml[start + 5];
-    if(c === ' ' || c === '>') break;
-  }
-  const end = xml.indexOf('</w:tr>', last);
-  return (start >= 0 && end >= 0) ? { start, end: end + 7 } : null;
-}
-
-// sisipkan baris harian bulan-bulan sebelumnya (urut) di depan baris dokumen dasar
-function mergeDailyRows(baseXml, otherXmls){
-  const span = dailyRowSpan(baseXml);
-  if(!span) return baseXml;
-  let rows = '';
-  otherXmls.forEach(ox => {
-    const s = dailyRowSpan(ox);
-    if(s) rows += ox.slice(s.start, s.end);
-  });
-  return rows ? baseXml.slice(0, span.start) + rows + baseXml.slice(span.start) : baseXml;
-}
 
 // ubah label periode dokumen bulanan menjadi triwulan (dokumen dasar =
 // laporan bulan terakhir triwulan yang tersedia)
@@ -3347,6 +3321,122 @@ function transformName(name, src, dst){
   return n;
 }
 
+// Baris penutup "TOTAL ..." dijumlahkan ulang dari baris data di atasnya.
+// Sel pertamanya kerap menggabungkan beberapa kolom sehingga jumlah selnya
+// lebih sedikit — selisih itu dipakai sebagai pergeseran indeks kolom.
+function perbaruiBarisTotal(rows, dateCols){
+  if(rows.length < 2) return;
+  const akhir = rows[rows.length - 1];
+  if(!/total/i.test(String(akhir[0] || ''))) return;
+  const data = rows.slice(0, -1);
+  const geser = data[0].length - akhir.length;
+  if(geser < 0) return;
+  for(let c = 0; c < data[0].length; c++){
+    if(dateCols.indexOf(c) >= 0) continue;
+    const t = c - geser;
+    if(t <= 0 || t >= akhir.length) continue;
+    let jml = 0, ada = false;
+    data.forEach(r => { const n = angkaId(r[c]); if(n !== null){ jml += n; ada = true; } });
+    if(ada) akhir[t] = angka2(jml);
+  }
+}
+
+// ===== GABUNG LAMPIRAN TRIWULAN =====
+// Tiga laporan bulanan digabung menjadi satu laporan triwulan. Perlakuannya
+// berbeda menurut watak tabelnya, mengikuti bentuk laporan triwulan yang
+// sudah dipakai selama ini:
+//  - tabel PERISTIWA (punya kolom tanggal) — kegiatan harian, daftar konten,
+//    rincian kegiatan — barisnya disambung urut bulan;
+//  - tabel INVENTARIS (alsintan, irpom, brigade, statistik) mencatat keadaan,
+//    bukan kejadian, sehingga yang berlaku adalah keadaan akhir triwulan:
+//    dipakai bulan terakhir yang punya datanya.
+const sidikTabel = t => (t.labels || []).join('|').toLowerCase().replace(/\s+/g, ' ').trim();
+const tabelPeristiwa = t => !!(t.dateCols && t.dateCols.length) ||
+  (t.labels || []).some(l => /tanggal/i.test(l));
+const barisTotal = r => (r || []).some(c => /^TOTAL\b/i.test(String(c || '').trim()));
+
+// kelompokkan tabel yang sama (dikenali dari judul kolomnya) antar-bulan
+function kelompokTabelBulanan(bulanan){
+  const grup = [];
+  bulanan.forEach((b, i) => (b.tabel || []).forEach(t => {
+    const s = sidikTabel(t);
+    let g = grup.find(u => u.sidik === s);
+    if(!g){ g = { sidik: s, contoh: t, bulan: [] }; grup.push(g); }
+    if(!g.bulan[i]) g.bulan[i] = t;
+  }));
+  return grup;
+}
+
+// baris hasil gabungan satu kelompok tabel
+function barisTriwulan(g){
+  const ada = g.bulan.filter(t => t);
+  if(!ada.length) return null;
+  if(!tabelPeristiwa(g.contoh)) return ada[ada.length - 1].rows.map(r => r.slice());
+  // tabel peristiwa: baris data tiap bulan disambung, baris TOTAL per bulan
+  // dibuang dulu lalu dipasang satu di akhir dan dihitung ulang
+  let total = null;
+  const rows = [];
+  // tabel yang baris judulnya tidak ditebalkan membuat judul itu terbaca
+  // sebagai data; tanpa penjagaan ini judulnya akan terulang tiap bulan
+  const sidikBaris = r => (r || []).map(c => String(c == null ? '' : c).trim()).join('|').toLowerCase();
+  const kepala = sidikBaris(g.contoh.labels);
+  ada.forEach(t => t.rows.forEach(r => {
+    if(barisTotal(r)){ if(!total) total = r.slice(); return; }
+    if(rows.length && sidikBaris(r) === kepala) return;
+    rows.push(r.slice());
+  }));
+  if(!rows.length) return null;
+  // nomor urut ditulis ulang bila kolom pertama memang nomor
+  const berNomor = /^no\.?$/i.test(String((g.contoh.labels || [])[0] || '')) &&
+    rows.some(r => /^\d+$/.test(String(r[0] || '').trim()));
+  if(berNomor) rows.forEach((r, i) => { r[0] = String(i + 1); });
+  if(total){
+    rows.push(total);
+    perbaruiBarisTotal(rows, g.contoh.dateCols || []);
+    // label "TOTAL BULAN INI" tidak lagi tepat untuk tiga bulan
+    const i = total.findIndex(c => /^TOTAL\b/i.test(String(c || '').trim()));
+    if(i >= 0) total[i] = String(total[i]).replace(/BULAN\s+INI/i, 'TRIWULAN');
+  }
+  return rows;
+}
+
+// tulis baris ke tabel ke-idx; dateCols sengaja kosong supaya jumlah baris
+// mengikuti data gabungan, bukan jumlah baris dokumen dasar
+function tulisTabelKe(xml, idx, rows){
+  const f = daftarTabelData(xml)[idx];
+  if(!f || !rows || !rows.length) return xml;
+  const tbl = tulisTabel(xml.slice(f.tblStart, f.tblEnd), f.head, rows, []);
+  return xml.slice(0, f.tblStart) + tbl + xml.slice(f.tblEnd);
+}
+
+// salin tabel utuh dari dokumen bulan lain ke halaman lampiran dokumen dasar
+// (dipakai bila bulan dasar belum punya tabel itu sama sekali)
+function salinTabelKeLampiran(xml, donorXml, donor){
+  const tbl = donorXml.slice(donor.tblStart, donor.tblEnd);
+  const titik = titikLampiran(xml);
+  const judul = donor.judul ? paraJudulLampiran(donor.judul) : '';
+  return xml.slice(0, titik.pos) + judul + tbl + '<w:p/>' + xml.slice(titik.pos);
+}
+
+// bulanan: [{ tabel, xml }] urut bulan, unsur terakhir = dokumen dasar
+function gabungLampiranTriwulan(xml, bulanan){
+  const dasar = bulanan[bulanan.length - 1];
+  kelompokTabelBulanan(bulanan).forEach(g => {
+    const rows = barisTriwulan(g);
+    if(!rows) return;
+    let idx = (dasar.tabel || []).findIndex(t => sidikTabel(t) === g.sidik);
+    if(idx < 0){
+      // bulan dasar tidak punya tabel ini — tabelnya disalin dari bulan yang punya
+      const iDonor = g.bulan.map((t, i) => t ? i : -1).filter(i => i >= 0).pop();
+      xml = salinTabelKeLampiran(xml, bulanan[iDonor].xml, g.bulan[iDonor]);
+      idx = daftarTabelData(xml).findIndex(t => sidikTabel(t) === g.sidik);
+      if(idx < 0) return;
+    }
+    xml = tulisTabelKe(xml, idx, rows);
+  });
+  return xml;
+}
+
 // ===== UI =====
 const files = []; // { file, name, src, status }
 const listEl = document.getElementById('file-list');
@@ -3628,23 +3718,6 @@ function simpanDraft(f){
 // Baris penutup "TOTAL BULAN INI" dijumlahkan ulang dari baris harian.
 // Sel pertamanya menggabungkan beberapa kolom, jadi jumlah selnya lebih
 // sedikit — selisih itu dipakai sebagai pergeseran indeks kolom.
-function perbaruiBarisTotal(rows, dateCols){
-  if(rows.length < 2) return;
-  const akhir = rows[rows.length - 1];
-  if(!/total/i.test(String(akhir[0] || ''))) return;
-  const data = rows.slice(0, -1);
-  const geser = data[0].length - akhir.length;
-  if(geser < 0) return;
-  for(let c = 0; c < data[0].length; c++){
-    if(dateCols.indexOf(c) >= 0) continue;
-    const t = c - geser;
-    if(t <= 0 || t >= akhir.length) continue;
-    let jml = 0, ada = false;
-    data.forEach(r => { const n = angkaId(r[c]); if(n !== null){ jml += n; ada = true; } });
-    if(ada) akhir[t] = angka2(jml);
-  }
-}
-
 function gambarGrid(){
   const lamp = files[lampIdx].lamp;
   if(!lamp){ grid.innerHTML = ''; return; }
@@ -3885,33 +3958,45 @@ btn.addEventListener('click', async () => {
           ') — belum ada: ' + kurang.map(m => BULAN[m]).join(', ') + '.', 'err');
         return;
       }
-      // dokumen bulan terakhir jadi dasar; baris tabel harian dua bulan
-      // sebelumnya digabungkan ke dalamnya
+      // dokumen bulan terakhir jadi dasar; isi lampiran ketiga bulan
+      // digabungkan ke dalamnya
       const g = cand.sort((a, b) => a.src.mIdx - b.src.mIdx);
       const base = g[g.length - 1];
-      setStatus('memproses triwulan: ' + base.name + ' ...');
+      setStatus('membaca ' + g.length + ' laporan bulanan: ' +
+        g.map(f => BULAN[f.src.mIdx]).join(', ') + ' ...');
       const zip = await JSZip.loadAsync(base.file);
       let xml = await zip.file('word/document.xml').async('string');
-      const others = [];
-      for(const o of g.slice(0, -1)){
-        const oz = await JSZip.loadAsync(o.file);
-        let ox = await oz.file('word/document.xml').async('string');
-        if(desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
-        others.push(ox);
+      // nama desa pada baris tabel bulan lain ikut diseragamkan
+      const samakanDesa = (f, rows) => (!desaIn || !f.desa || desaIn === f.desa) ? rows
+        : rows.map(r => r.map(c => String(c == null ? '' : c).split(f.desa).join(desaIn)));
+      const bulanan = [];
+      for(const o of g){
+        const oz = o === base ? zip : await JSZip.loadAsync(o.file);
+        let ox = o === base ? xml : await oz.file('word/document.xml').async('string');
+        if(o !== base && desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
+        bulanan.push({ xml: ox, berkas: o,
+          tabel: (o.tabel || []).map(t => Object.assign({}, t, { rows: samakanDesa(o, t.rows) })) });
       }
       xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
       xml = olahLampiran(xml, base, labelTriwulan(q), true); // baris masih milik bulan dasar
-      xml = mergeDailyRows(xml, others);
+      bulanan[bulanan.length - 1].xml = xml;
+      xml = gabungLampiranTriwulan(xml, bulanan);
       // tabel lampiran kini berisi tiga bulan: angka pada isi laporan dihitung
       // dari tabel gabungan agar mewakili satu triwulan penuh
-      const utamaQ = tabelDiisi(base)[0];
-      if(utamaQ && base.tipe && !isTabelDiseminasi(utamaQ.labels)){
-        const gab = daftarTabelData(xml)[utamaQ.idx] || findLampiran(xml);
-        if(gab) xml = integrasiData(xml, base.tipe.key, gab, labelTriwulan(q), desaIn || base.desa || null);
+      const semuaQ = daftarTabelData(xml);
+      const utamaQ = semuaQ[0];
+      if(utamaQ && base.tipe){
+        if(isTabelDiseminasi(utamaQ.labels))
+          xml = integrasiDiseminasi(xml, kegiatanDariBaris(utamaQ.rows, utamaQ.labels), labelTriwulan(q));
+        else
+          xml = integrasiData(xml, base.tipe.key, utamaQ, labelTriwulan(q), desaIn || base.desa || null);
       }
-      if(base.deskripsi) xml = terapkanDeskripsi(xml, base.deskripsi);
+      // deskripsi & gambar lampiran ketiga bulan ikut terbawa, urut bulan
+      const deskQ = g.map(f => f.deskripsi).filter(t => t).join('\n\n');
+      if(deskQ) xml = terapkanDeskripsi(xml, deskQ);
+      const gambarQ = g.reduce((a, f) => a.concat(f.gambar || []), []);
       xml = await olahTautan(zip, xml, base);
-      await bungkus(zip, await sisipGambarLampiran(zip, transformXmlTriwulan(xml, base.src, q), base.gambar),
+      await bungkus(zip, await sisipGambarLampiran(zip, transformXmlTriwulan(xml, base.src, q), gambarQ),
         transformNameTriwulan(base.name, base.src, q));
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
     } else {
@@ -3953,7 +4038,7 @@ btn.addEventListener('click', async () => {
 // dipakai pengujian otomatis
 window._skp = { detectSource, transformXml, transformName, lastDay,
   detectTipe, applyVariant, VARIANTS, detectDesa, replaceDesa,
-  transformXmlTriwulan, transformNameTriwulan, mergeDailyRows, dailyRowSpan, labelTriwulan,
+  transformXmlTriwulan, transformNameTriwulan, labelTriwulan,
   findLampiran, applyLampiran, landscapeRange, setCellText,
   parseDiseminasi, barisDiseminasi, isTabelDiseminasi,
   pdfBaris, tabelDariDocx, tabelDariXlsx, tabelDariCsv, petakanTabel, bacaBerkasLampiran,
@@ -3966,6 +4051,8 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
   objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
   ruangSect, titikLampiran, kisiGambar, keteranganGambar, siapkanGambar, ukuranGambar,
+  sidikTabel, tabelPeristiwa, kelompokTabelBulanan, barisTriwulan, tulisTabelKe,
+  salinTabelKeLampiran, gabungLampiranTriwulan, perbaruiBarisTotal,
   bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
   hurufKolom, angka2 };
 
