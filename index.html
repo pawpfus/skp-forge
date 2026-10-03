@@ -186,6 +186,16 @@
   .lamp-desk textarea::placeholder{color:var(--ink-4);}
   .lamp-desk textarea:focus{border-color:var(--accent-line);background:var(--card);
     box-shadow:0 0 0 3px var(--accent-soft);}
+  .lamp-foto-bar{display:flex;flex-wrap:wrap;gap:8px;}
+  .lamp-foto-bar[hidden]{display:none;}
+  .lamp-foto-bar .chip{display:inline-flex;align-items:center;gap:7px;max-width:280px;
+    background:var(--soft);border:1px solid var(--line);border-radius:999px;
+    padding:4px 5px 4px 12px;font-size:11.5px;color:var(--ink-2);}
+  .lamp-foto-bar .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lamp-foto-bar .chip button{flex:none;width:20px;height:20px;padding:0;border-radius:50%;
+    font-size:9px;line-height:1;color:var(--ink-3);}
+  .lamp-foto-bar .chip button:hover{color:var(--bad);border-color:var(--bad);
+    background:rgba(255,106,90,.1);}
   .lamp-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 18px;
     border-top:1px solid var(--line);background:var(--card);}
   .lamp-foot button{font-size:12.5px;padding:9px 14px;}
@@ -320,11 +330,16 @@
       <label for="lamp-deskripsi">DESKRIPSI PELAKSANAAN (OPSIONAL)</label>
       <textarea id="lamp-deskripsi" rows="3" spellcheck="false"
         placeholder="Kalimat di sini ditambahkan ke bagian 3. PELAKSANAAN KEGIATAN pada laporan. Terisi sendiri dari berkas yang diunggah, boleh disunting atau diketik langsung."></textarea>
+      <label id="lamp-foto-label" hidden>GAMBAR LAMPIRAN</label>
+      <div class="lamp-foto-bar" id="lamp-foto-bar" hidden></div>
     </div>
     <div class="lamp-foot">
       <button id="lamp-impor">Unggah dokumen</button>
       <input type="file" id="lamp-impor-file"
         accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
+      <button id="lamp-foto">+ Gambar lampiran</button>
+      <input type="file" id="lamp-foto-file" multiple
+        accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
       <button id="lamp-add">+ Baris</button>
       <button id="lamp-reset">Kembalikan asli</button>
       <span class="lamp-periode" id="lamp-pilih" hidden>TABEL
@@ -1933,53 +1948,107 @@ function rakitBarisPdf(penggal){
   }).filter(t => t);
 }
 
-// PDF -> array baris teks
-async function pdfBaris(arrayBuffer){
-  const b = new Uint8Array(arrayBuffer);
+// byte -> string latin1 (dipotong supaya argumen apply tidak kebanyakan)
+function teksLatin(b){
   let raw = '';
   for(let i = 0; i < b.length; i += 32768)
     raw += String.fromCharCode.apply(null, b.subarray(i, Math.min(i + 32768, b.length)));
-  // batas objek diambil dari awal objek berikutnya — data biner bisa saja
-  // memuat kata "endobj" sehingga pencarian penanda tidak selalu aman
+  return raw;
+}
+const bytesLatin = s => {
+  const b = new Uint8Array(s.length);
+  for(let k = 0; k < s.length; k++) b[k] = s.charCodeAt(k) & 255;
+  return b;
+};
+
+// daftar objek PDF, urut nomor. Batas tiap objek diambil dari awal objek
+// berikutnya — data biner bisa saja memuat kata "endobj" sehingga pencarian
+// penanda penutup tidak selalu aman
+function objekPdf(raw){
   const kepala = [];
   const reObj = /(\d+)\s+0\s+obj\b/g;
   let m;
   while((m = reObj.exec(raw))) kepala.push({ no: parseInt(m[1], 10), awal: m.index, bodi: m.index + m[0].length });
-  const objek = kepala.map((k, i) => ({ no: k.no,
-    isi: raw.slice(k.bodi, i + 1 < kepala.length ? kepala[i + 1].awal : raw.length) }));
-  objek.sort((a, b2) => a.no - b2.no);
+  return kepala.map((k, i) => ({ no: k.no,
+    isi: raw.slice(k.bodi, i + 1 < kepala.length ? kepala[i + 1].awal : raw.length) }))
+    .sort((a, b) => a.no - b.no);
+}
+
+// kamus + isi stream sebuah objek, apa adanya (penyaringnya belum dibuka)
+function streamPdf(o){
+  const i = o.isi.indexOf('stream');
+  if(i < 0) return null;
+  const dict = o.isi.slice(0, i);
+  let j = i + 6;
+  if(o.isi[j] === '\r') j++;
+  if(o.isi[j] === '\n') j++;
+  // panjang tepat dari /Length; DecompressionStream menolak sisa byte di
+  // belakang, jadi penanda endstream saja tidak cukup (ada \r\n penutup)
+  const len = (dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/) || [])[1];
+  let e;
+  if(len){
+    e = j + parseInt(len, 10);
+  } else {
+    e = o.isi.indexOf('endstream', j);
+    if(e < 0) return null;
+    while(e > j && (o.isi[e - 1] === '\n' || o.isi[e - 1] === '\r')) e--;
+  }
+  return { dict, mentah: o.isi.slice(j, e) };
+}
+
+// PDF -> array baris teks
+async function pdfBaris(arrayBuffer){
   const baris = [];
-  for(const o of objek){
-    const i = o.isi.indexOf('stream');
-    if(i < 0) continue;
-    const dict = o.isi.slice(0, i);
-    if(/\/Subtype\s*\/Image|\/DCTDecode|\/Type\s*\/(Font|XRef|ObjStm|Metadata)/.test(dict)) continue;
-    let j = i + 6;
-    if(o.isi[j] === '\r') j++;
-    if(o.isi[j] === '\n') j++;
-    // panjang tepat dari /Length; DecompressionStream menolak sisa byte di
-    // belakang, jadi penanda endstream saja tidak cukup (ada \r\n penutup)
-    const len = (dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/) || [])[1];
-    let e;
-    if(len){
-      e = j + parseInt(len, 10);
-    } else {
-      e = o.isi.indexOf('endstream', j);
-      if(e < 0) continue;
-      while(e > j && (o.isi[e - 1] === '\n' || o.isi[e - 1] === '\r')) e--;
-    }
-    const mentah = o.isi.slice(j, e);
-    const bytes = new Uint8Array(mentah.length);
-    for(let k = 0; k < mentah.length; k++) bytes[k] = mentah.charCodeAt(k) & 255;
-    const keluar = await inflateBytes(bytes);
+  for(const o of objekPdf(teksLatin(new Uint8Array(arrayBuffer)))){
+    const s = streamPdf(o);
+    if(!s) continue;
+    if(/\/Subtype\s*\/Image|\/DCTDecode|\/Type\s*\/(Font|XRef|ObjStm|Metadata)/.test(s.dict)) continue;
+    const bytes = bytesLatin(s.mentah);
+    // sebagian penghasil PDF (jsPDF, dll.) menulis isi halaman tanpa
+    // pemampatan — stream tanpa /Filter dipakai apa adanya
+    const keluar = /\/Filter/.test(s.dict) ? await inflateBytes(bytes) : bytes;
     if(!keluar) continue;
-    let teks = '';
-    for(let k = 0; k < keluar.length; k += 32768)
-      teks += String.fromCharCode.apply(null, keluar.subarray(k, Math.min(k + 32768, keluar.length)));
+    const teks = teksLatin(keluar);
     if(!/\bBT\b/.test(teks) || !(/\bTJ\b/.test(teks) || /\bTj\b/.test(teks))) continue;
     baris.push(...rakitBarisPdf(penggalPdf(teks)));
   }
   return baris;
+}
+
+// PDF hasil pindaian tidak punya lapisan teks: tiap halaman hanya satu foto.
+// JPEG di dalam PDF (/DCTDecode) tersimpan apa adanya sehingga bytenya bisa
+// langsung dipakai sebagai berkas gambar tanpa penyandian ulang.
+function gambarPdf(arrayBuffer){
+  const objek = objekPdf(teksLatin(new Uint8Array(arrayBuffer)));
+  const peta = {};
+  objek.forEach(o => { peta[o.no] = o; });
+  const isJpeg = o => {
+    const s = streamPdf(o);
+    return s && /\/Subtype\s*\/Image/.test(s.dict) && /\/DCTDecode/.test(s.dict) ? s : null;
+  };
+  const semua = objek.filter(isJpeg).map(o => o.no);
+  if(!semua.length) return [];
+  // urutan halaman dilacak lewat /Kids lalu XObject yang digambar tiap
+  // halaman; bila ada yang tak terbaca, dipakai urutan nomor objek
+  const urut = [];
+  const pages = objek.find(o => /\/Type\s*\/Pages\b/.test(o.isi));
+  const kids = pages && (pages.isi.match(/\/Kids\s*\[([^\]]*)\]/) || [])[1];
+  [...String(kids || '').matchAll(/(\d+)\s+0\s+R/g)].forEach(k => {
+    const hal = peta[parseInt(k[1], 10)];
+    if(!hal) return;
+    const noRes = (hal.isi.match(/\/Resources\s+(\d+)\s+0\s+R/) || [])[1];
+    const res = noRes ? ((peta[parseInt(noRes, 10)] || {}).isi || '') : hal.isi;
+    const xobj = (res.match(/\/XObject\s*<<([\s\S]*?)>>/) || [])[1] || '';
+    const nama = {};
+    for(const m of xobj.matchAll(/\/(\w+)\s+(\d+)\s+0\s+R/g)) nama[m[1]] = parseInt(m[2], 10);
+    const noIsi = (hal.isi.match(/\/Contents\s+(\d+)\s+0\s+R/) || [])[1];
+    const isi = noIsi && peta[parseInt(noIsi, 10)]
+      ? ((streamPdf(peta[parseInt(noIsi, 10)]) || {}).mentah || '') : '';
+    for(const m of isi.matchAll(/\/(\w+)\s+Do\b/g))
+      if(nama[m[1]] != null && !urut.includes(nama[m[1]])) urut.push(nama[m[1]]);
+  });
+  const pakai = urut.length === semua.length && urut.every(n => semua.includes(n)) ? urut : semua;
+  return pakai.map(no => new Blob([bytesLatin(isJpeg(peta[no]).mentah)], { type: 'image/jpeg' }));
 }
 
 // ===== IMPOR LAPORAN DISEMINASI =====
@@ -2344,6 +2413,29 @@ function muatOcr(){
   });
   return ocrDimuat;
 }
+// Halaman laporan lazim memuat foto kegiatan dan tanda tangan; OCR ikut
+// "membaca" gambarnya dan memulangkan baris sampah — termasuk cap lokasi dan
+// waktu dari kamera GPS. Keyakinan pengenalan memisahkannya dengan tegas:
+// teks cetak di atas 80, hasil baca foto jauh di bawahnya.
+//
+// Penyaringan tidak boleh dipukul rata, karena pindaian yang memang buram
+// seluruhnya juga berkeyakinan rendah dan teksnya nyata. Dua syarat memisahkan
+// kedua keadaan itu: halaman teks yang bersih menyisakan cukup banyak baris
+// jelas, dan baris yang dibuang berkeyakinan jauh di bawah ambang — bukan
+// sekadar di bawahnya sedikit seperti pada pindaian buram.
+// (Jumlah baris yang dibuang sengaja tidak dipakai: justru pada halaman yang
+// separuhnya foto, derau terbanyak, dan di situ penyaringan paling diperlukan.)
+const AMBANG_YAKIN = 80;
+const MIN_BARIS_JELAS = 8;
+const MAKS_RERATA_DERAU = 60;
+function saringDerauOcr(baris){
+  const jelas = baris.filter(b => b.yakin >= AMBANG_YAKIN);
+  const buang = baris.filter(b => b.yakin < AMBANG_YAKIN);
+  if(jelas.length < MIN_BARIS_JELAS || !buang.length) return baris;
+  const rerata = buang.reduce((j, b) => j + b.yakin, 0) / buang.length;
+  return rerata <= MAKS_RERATA_DERAU ? jelas : baris;
+}
+
 // OCR memulangkan tiap kata beserta kotak posisinya. Jarak antar-kata yang
 // lebih lebar dari tinggi baris berarti batas kolom, bukan spasi biasa —
 // batas itu ditandai spasi ganda supaya tabelnya bisa disusun ulang.
@@ -2357,11 +2449,13 @@ function barisDariBlokOcr(data){
     let s = kata[0].text;
     for(let i = 1; i < kata.length; i++)
       s += (kata[i].bbox.x0 - kata[i - 1].bbox.x1 > batas ? '  ' : ' ') + kata[i].text;
-    baris.push(s);
+    baris.push({ teks: s, yakin: kata.reduce((j, w) => j + (w.confidence || 0), 0) / kata.length });
   })));
-  return baris;
+  return saringDerauOcr(baris).map(b => b.teks);
 }
-async function bacaGambar(file, lapor){
+
+// satu worker dipakai bersama: memuat ulang mesin OCR per halaman mahal
+async function pakaiOcr(kerja, lapor){
   await muatOcr();
   const worker = await Tesseract.createWorker('ind', 1, {
     workerPath: 'vendor/ocr/worker.min.js',
@@ -2370,13 +2464,27 @@ async function bacaGambar(file, lapor){
     gzip: true, legacyCore: false, legacyLang: false,
     logger: m => { if(lapor) lapor(m); }
   });
-  try {
-    const { data } = await worker.recognize(file, {}, { blocks: true, text: true });
-    const baris = barisDariBlokOcr(data);
-    const teks = (data && data.text) || '';
-    return { teks, baris: baris.length ? baris
-      : teks.split(/\r?\n/).map(t => t.trim()).filter(t => t) };
-  } finally { await worker.terminate(); }
+  try { return await kerja(worker); } finally { await worker.terminate(); }
+}
+async function kenaliGambar(worker, sumber){
+  const { data } = await worker.recognize(sumber, {}, { blocks: true, text: true });
+  const baris = barisDariBlokOcr(data);
+  const teks = (data && data.text) || '';
+  return { teks, baris: baris.length ? baris
+    : teks.split(/\r?\n/).map(t => t.trim()).filter(t => t) };
+}
+async function bacaGambar(file, lapor){ return pakaiOcr(w => kenaliGambar(w, file), lapor); }
+
+// halaman pindaian dibaca berurutan; kemajuan dilaporkan per halaman
+async function bacaHalaman(gambar, lapor){
+  return pakaiOcr(async worker => {
+    const baris = [];
+    for(let i = 0; i < gambar.length; i++){
+      if(lapor) lapor({ status: 'recognizing text', halaman: i + 1, dari: gambar.length });
+      baris.push(...(await kenaliGambar(worker, gambar[i])).baris);
+    }
+    return { baris, teks: baris.join('\n') };
+  }, lapor);
 }
 
 // ctx: { desa, periode } — dipakai pembaca yang butuh konteks laporan,
@@ -2400,13 +2508,33 @@ async function bacaBerkasLampiran(file, labels, lapor, ctx){
       teks: polos.join('\n') };
   }
   if(nama.endsWith('.pdf')){
-    const baris = await pdfBaris(await file.arrayBuffer());
-    if(!baris.length) throw new Error('teks PDF tidak terbaca — kemungkinan hasil pindaian; simpan halamannya sebagai gambar (.jpg/.png) lalu unggah supaya dibaca OCR');
-    const teks = narasiDariBaris(baris);
-    const keg = parseDiseminasi(baris);
+    const isi = await file.arrayBuffer();
+    let baris = await pdfBaris(isi);
+    let asal = '', pindaian = false;
+    if(!baris.length){
+      // tidak ada lapisan teks: tiap halaman berupa gambar, jadi dibaca OCR
+      const halaman = gambarPdf(isi);
+      if(!halaman.length) throw new Error('PDF ini tidak memuat teks maupun gambar halaman yang bisa dibaca — simpan ulang halamannya sebagai .jpg/.png lalu unggah');
+      baris = (await bacaHalaman(halaman, lapor)).baris;
+      if(!baris.length) throw new Error('tidak ada tulisan yang terbaca dari ' + halaman.length + ' halaman pindaian itu');
+      asal = ' (pindaian ' + halaman.length + ' halaman)';
+      pindaian = true;
+    }
+    const polos = baris.map(t => t.replace(/ {2,}/g, ' ').trim()).filter(t => t);
+    const teks = narasiDariBaris(polos);
+    const keg = parseDiseminasi(polos);
     if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
-      jenis: 'kegiatan diseminasi', teks };
-    return { rows: null, jumlah: baris.length, jenis: 'teks dokumen', teks: teks || baris.join('\n') };
+      jenis: 'kegiatan diseminasi' + asal, teks };
+    // batas kolom hanya terbaca pada jalur OCR (spasi ganda dari kotak kata)
+    if(pindaian){
+      const tabel = tabelDariTeks(baris.join('\n'));
+      if(tabel){
+        const rows = petakanTabel(tabel, labels);
+        if(rows.length) return { rows, jumlah: rows.length, jenis: 'baris tabel' + asal, teks };
+      }
+    }
+    return { rows: null, jumlah: polos.length, jenis: 'teks dokumen' + asal,
+      teks: teks || polos.join('\n') };
   }
   if(nama.endsWith('.docx')){
     const zip = await JSZip.loadAsync(file);
@@ -2476,6 +2604,128 @@ function applyLampiran(xml, lamp){
   if(!f) return xml;
   const tbl = tulisTabel(xml.slice(f.tblStart, f.tblEnd), f.head, lamp.rows, lamp.dateCols);
   return xml.slice(0, f.tblStart) + tbl + xml.slice(f.tblEnd);
+}
+
+// ===== LAMPIRAN GAMBAR =====
+// Sebagian laporan perlu melampirkan foto kegiatan. Berkasnya dimasukkan ke
+// word/media, didaftarkan pada relasi dokumen dan [Content_Types].xml, lalu
+// dirujuk paragraf <w:drawing> baru pada halaman lampiran paling akhir.
+const EMU_TWIP = 635;                 // 1 twip = 635 EMU
+const NS_DRAW = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const NS_PIC = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
+
+// ukuran asli gambar — dibaca lewat dekoder bawaan peramban
+async function ukuranGambar(blob){
+  try {
+    const bmp = await createImageBitmap(blob);
+    const u = { w: bmp.width, h: bmp.height };
+    if(bmp.close) bmp.close();
+    return u.w && u.h ? u : null;
+  } catch(e){ return null; }
+}
+
+// Word hanya menampilkan sebagian format gambar; selain JPEG/PNG disandikan
+// ulang menjadi PNG lewat canvas supaya pasti tampil saat dokumen dibuka
+async function siapkanGambar(file){
+  const bawaan = /\.png$/i.test(file.name) ? 'png' : /\.jpe?g$/i.test(file.name) ? 'jpeg' : null;
+  if(bawaan) return { blob: file, ext: bawaan, ukuran: await ukuranGambar(file) };
+  const bmp = await createImageBitmap(file);
+  const kanvas = document.createElement('canvas');
+  kanvas.width = bmp.width; kanvas.height = bmp.height;
+  kanvas.getContext('2d').drawImage(bmp, 0, 0);
+  if(bmp.close) bmp.close();
+  const blob = await new Promise(r => kanvas.toBlob(r, 'image/png'));
+  if(!blob) throw new Error('gambar ' + file.name + ' tidak bisa disiapkan');
+  return { blob, ext: 'png', ukuran: { w: kanvas.width, h: kanvas.height } };
+}
+
+// ruang teks pada tata halaman bagian terakhir dokumen (EMU)
+function ruangHalaman(xml){
+  const semua = [...xml.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)];
+  const s = semua.length ? semua[semua.length - 1][0] : '';
+  const n = (re, bak) => { const m = s.match(re); return m ? parseInt(m[1], 10) : bak; };
+  const lebar = n(/<w:pgSz[^>]*\sw:w="(\d+)"/, 11907) -
+    n(/<w:pgMar[^>]*\sw:left="(\d+)"/, 1418) - n(/<w:pgMar[^>]*\sw:right="(\d+)"/, 1275);
+  const tinggi = n(/<w:pgSz[^>]*\sw:h="(\d+)"/, 16840) -
+    n(/<w:pgMar[^>]*\sw:top="(\d+)"/, 1276) - n(/<w:pgMar[^>]*\sw:bottom="(\d+)"/, 1276);
+  return { lebar: Math.max(lebar, 2000) * EMU_TWIP, tinggi: Math.max(tinggi, 2000) * EMU_TWIP };
+}
+
+const PATAH_HALAMAN = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+const paraJudulLampiran = teks =>
+  '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="240"/><w:rPr><w:b/></w:rPr></w:pPr>' +
+  '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' + escXml(teks) + '</w:t></w:r></w:p>';
+const paraKeterangan = teks =>
+  '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="240"/>' +
+  '<w:rPr><w:i/><w:sz w:val="20"/></w:rPr></w:pPr>' +
+  '<w:r><w:rPr><w:i/><w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">' +
+  escXml(teks) + '</w:t></w:r></w:p>';
+
+function paraGambar(rid, id, nama, cx, cy){
+  return '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="80"/></w:pPr><w:r><w:drawing>' +
+    '<wp:inline distT="0" distB="0" distL="0" distR="0">' +
+    '<wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:effectExtent l="0" t="0" r="0" b="0"/>' +
+    '<wp:docPr id="' + id + '" name="Lampiran ' + id + '"/>' +
+    '<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="' + NS_DRAW + '" noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
+    '<a:graphic xmlns:a="' + NS_DRAW + '"><a:graphicData uri="' + NS_PIC + '">' +
+    '<pic:pic xmlns:pic="' + NS_PIC + '"><pic:nvPicPr>' +
+    '<pic:cNvPr id="0" name="' + escXml(nama) + '"/><pic:cNvPicPr/></pic:nvPicPr>' +
+    '<pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+    '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm>' +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>' +
+    '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+}
+
+// nama berkas kamera (IMG_2026…, DSC01234, 20260915_151521) tidak bermakna
+// sebagai keterangan gambar, jadi dibiarkan kosong
+const RE_NAMA_KAMERA = /^(img|dsc|dscn|pxl|photo|foto|image|gambar|screenshot|whatsapp(\s*image)?)[\s_-]*[\d\s_.:-]*$/i;
+function keteranganGambar(nama){
+  const dasar = String(nama).replace(/\.[^.]+$/, '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  return !dasar || /^[\d\s.()-]+$/.test(dasar) || RE_NAMA_KAMERA.test(dasar) ? '' : dasar;
+}
+
+// sisipkan halaman lampiran berisi gambar pilihan pengguna
+async function sisipGambarLampiran(zip, xml, gambar, judul){
+  if(!gambar || !gambar.length) return xml;
+  const relPath = 'word/_rels/document.xml.rels';
+  const relFile = zip.file(relPath);
+  const ctFile = zip.file('[Content_Types].xml');
+  if(!relFile || !ctFile) throw new Error('dokumen tidak lengkap — gambar lampiran tidak bisa disisipkan');
+  const rels = await relFile.async('string');
+  let ct = await ctFile.async('string');
+  // nomor relasi, nama berkas media, dan id bentuk dipilih yang belum terpakai
+  let noRel = Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map(m => parseInt(m[1], 10)));
+  let noMedia = Math.max(0, ...Object.keys(zip.files)
+    .map(n => (n.match(/^word\/media\/\D*(\d+)\.\w+$/) || [])[1]).filter(v => v).map(Number));
+  const idAwal = Math.max(900, ...[...xml.matchAll(/<wp:docPr\s+id="(\d+)"/g)].map(m => parseInt(m[1], 10)));
+  const ruang = ruangHalaman(xml);
+  const tinggiMaks = Math.round(ruang.tinggi * 0.42);   // kira-kira dua foto sehalaman
+  let isi = PATAH_HALAMAN + paraJudulLampiran(judul || 'LAMPIRAN : DOKUMENTASI KEGIATAN');
+  const relBaru = [];
+  for(let i = 0; i < gambar.length; i++){
+    const g = await siapkanGambar(gambar[i]);
+    const berkas = 'escapes' + (++noMedia) + '.' + g.ext;
+    zip.file('word/media/' + berkas, g.blob);
+    const rid = 'rId' + (++noRel);
+    relBaru.push('<Relationship Id="' + rid + '" Type="http://schemas.openxmlformats.org/' +
+      'officeDocument/2006/relationships/image" Target="media/' + berkas + '"/>');
+    if(!new RegExp('<Default\\s+Extension="' + g.ext + '"', 'i').test(ct)){
+      const baru = '<Default Extension="' + g.ext + '" ContentType="image/' + g.ext + '"/>';
+      ct = /<Default\s/.test(ct) ? ct.replace(/<Default\s/, baru + '<Default ')
+                                 : ct.replace('</Types>', baru + '</Types>');
+    }
+    const u = g.ukuran || { w: 4, h: 3 };
+    let cx = ruang.lebar, cy = Math.round(cx * u.h / u.w);
+    if(cy > tinggiMaks){ cy = tinggiMaks; cx = Math.round(cy * u.w / u.h); }
+    isi += paraGambar(rid, idAwal + 1 + i, gambar[i].name, cx, cy);
+    const ket = keteranganGambar(gambar[i].name);
+    isi += ket ? paraKeterangan(ket) : '<w:p/>';
+  }
+  zip.file(relPath, rels.replace('</Relationships>', relBaru.join('') + '</Relationships>'));
+  zip.file('[Content_Types].xml', ct);
+  // disisipkan sebelum sectPr penutup supaya mengikuti tata halaman terakhir
+  const i = xml.lastIndexOf('<w:sectPr');
+  return i < 0 ? xml.replace('</w:body>', isi + '</w:body>') : xml.slice(0, i) + isi + xml.slice(i);
 }
 
 // ===== penulis tabel & paragraf umum (dipakai integrasi diseminasi) =====
@@ -3096,10 +3346,12 @@ function renderList(){
   let html = '<table><tr><th>#</th><th>FILE</th><th>BULAN ASAL</th><th>DESA</th><th>VARIASI NARASI</th>' +
     '<th>LAMPIRAN</th><th></th></tr>';
   files.forEach((f, i) => {
-    const terisi = f.tabel.some(t => t.edited) || !!f.deskripsi;
-    const teks = !f.tabel.length ? 'Deskripsi'
+    const foto = (f.gambar || []).length;
+    const terisi = f.tabel.some(t => t.edited) || !!f.deskripsi || !!foto;
+    const teks = (!f.tabel.length ? 'Deskripsi'
       : f.tabel.length > 1 ? 'Isi data (' + f.tabel.length + ' tabel)'
-      : 'Isi data (' + f.tabel[0].rows.length + ')';
+      : 'Isi data (' + f.tabel[0].rows.length + ')') +
+      (foto ? ' + ' + foto + ' gambar' : '');
     const lampSel = `<button class="lamp-btn${terisi ? ' done' : ''}" data-lamp="${i}">` +
       (terisi ? '&#10003; ' : '') + teks + '</button>';
     html += `<tr><td>${i + 1}</td><td>${escHtml(f.name)}</td>
@@ -3134,7 +3386,7 @@ async function addFiles(fileList){
       tabel.forEach(t => { t.asli = t.rows.map(r => r.slice()); t.edited = false; });
       files.push({ file, name: file.name, src: detectSource(xml, file.name),
         tipe: detectTipe(file.name), desa: detectDesa(xml), tautan: detectTautan(xml),
-        tabel, lamp: tabel[0] || null, deskripsi: '' });
+        tabel, lamp: tabel[0] || null, deskripsi: '', gambar: [] });
     } catch(e){
       setStatus('gagal membaca ' + file.name + ' — ' + (e.message || e), 'err');
     }
@@ -3155,7 +3407,46 @@ const selLampBulan = document.getElementById('lamp-bulan');
 const selLampTahun = document.getElementById('lamp-tahun');
 const deskEl = document.getElementById('lamp-deskripsi');
 const selLampTabel = document.getElementById('lamp-tabel');
-let lampIdx = -1, draft = [];
+const fotoBar = document.getElementById('lamp-foto-bar');
+const fotoFile = document.getElementById('lamp-foto-file');
+const tombolFoto = document.getElementById('lamp-foto');
+let lampIdx = -1, draft = [], fotoDraft = [];
+
+// ===== gambar lampiran yang dipilih untuk laporan ini =====
+function gambarDaftarFoto(){
+  const n = fotoDraft.length;
+  fotoBar.hidden = !n;
+  document.getElementById('lamp-foto-label').hidden = !n;
+  tombolFoto.textContent = n ? 'Gambar lampiran (' + n + ')' : '+ Gambar lampiran';
+  fotoBar.innerHTML = fotoDraft.map((g, i) => '<span class="chip"><span>' + escHtml(g.name) +
+    '</span><button data-foto="' + i + '" title="buang gambar ini">&#10005;</button></span>').join('');
+  fotoBar.querySelectorAll('[data-foto]').forEach(b => b.addEventListener('click', () => {
+    fotoDraft.splice(parseInt(b.dataset.foto, 10), 1);
+    gambarDaftarFoto();
+  }));
+}
+tombolFoto.addEventListener('click', () => fotoFile.click());
+// gambar diuji baca saat dipilih supaya berkas rusak ketahuan sekarang,
+// bukan saat laporan digenerate
+fotoFile.addEventListener('change', async () => {
+  const pilih = [...fotoFile.files];
+  fotoFile.value = '';
+  if(!pilih.length) return;
+  const hint = document.getElementById('lamp-hint');
+  const tolak = [];
+  for(const g of pilih){
+    if(!RE_GAMBAR.test(g.name)){ tolak.push(g.name); continue; }
+    try {
+      const bmp = await createImageBitmap(g);
+      if(bmp.close) bmp.close();
+      fotoDraft.push(g);
+    } catch(e){ tolak.push(g.name); }
+  }
+  gambarDaftarFoto();
+  hint.textContent = (tolak.length ? 'tidak bisa dibaca sebagai gambar: ' + tolak.join(', ') + '. ' : '') +
+    (fotoDraft.length ? fotoDraft.length + ' gambar akan dilampirkan pada halaman terakhir laporan — tekan SIMPAN'
+                      : 'belum ada gambar yang terpilih');
+});
 
 BULAN.forEach((b, i) => {
   const o = document.createElement('option');
@@ -3207,6 +3498,8 @@ function bukaLampiran(i){
   if(!f) return;
   lampIdx = i;
   deskEl.value = f.deskripsi || '';
+  fotoDraft = (f.gambar || []).slice();
+  gambarDaftarFoto();
   document.getElementById('lamp-sub').textContent = f.name;
   // pemilih tabel muncul bila laporannya punya lebih dari satu tabel data
   const pilih = document.getElementById('lamp-pilih');
@@ -3234,7 +3527,7 @@ function gambarLampiran(){
     document.getElementById('lamp-periode').hidden = true;
     document.getElementById('lamp-impor').hidden = false;
     document.getElementById('lamp-hint').textContent =
-      'laporan ini tidak punya tabel data — unggah dokumen (gambar/.pdf/.docx) untuk mengisi deskripsi, atau ketik sendiri di bawah.';
+      'laporan ini tidak punya tabel data — unggah dokumen (gambar/.pdf/.docx) untuk mengisi deskripsi, ketik sendiri di bawah, atau lampirkan gambar.';
     return;
   }
   draft = f.lamp.rows.map(r => r.slice());
@@ -3255,7 +3548,7 @@ function gambarLampiran(){
   const nyambung = diseminasi || (f.tipe && RINGKAS[f.tipe.key]);
   document.getElementById('lamp-impor').hidden = false;
   document.getElementById('lamp-hint').textContent = diseminasi
-    ? 'unggah Laporan Diseminasi (gambar/.pdf/.docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
+    ? 'unggah Laporan Diseminasi (.pdf — termasuk hasil pindaian, .docx, atau gambar) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
     : (auto ? (aturPeriode ? 'kolom tanggal (kuning) mengikuti bulan di samping — ubah bila tabelnya untuk bulan lain. '
                            : 'kolom tanggal (kuning) mengikuti periode target otomatis. ')
             : 'unggah dokumen (gambar/.pdf/.docx/.xlsx/.csv) atau isi manual di bawah. ') +
@@ -3365,12 +3658,14 @@ imporFile.addEventListener('change', async () => {
   try {
     hint.textContent = 'membaca ' + file.name + ' ...';
     // gambar dibaca OCR: unduhan pustaka & kemajuan pengenalan dilaporkan
+    let halaman = '';
     const kabar = m => {
       if(!m || !m.status) return;
+      if(m.halaman) halaman = ' halaman ' + m.halaman + '/' + m.dari;
       const p = m.progress ? ' ' + Math.round(m.progress * 100) + '%' : '';
       const kata = /recogniz/i.test(m.status) ? 'mengenali tulisan'
         : /load|initializ/i.test(m.status) ? 'menyiapkan OCR' : m.status;
-      hint.textContent = kata + p + ' — ' + file.name;
+      hint.textContent = kata + halaman + p + ' — ' + file.name;
     };
     const f = files[lampIdx];
     const ctx = { desa: document.getElementById('sel-desa').value.trim() || f.desa,
@@ -3400,6 +3695,8 @@ document.getElementById('lamp-reset').addEventListener('click', () => {
   const f = files[lampIdx];
   deskEl.value = '';
   f.deskripsi = '';
+  fotoDraft = [];
+  gambarDaftarFoto();
   if(!f.lamp) return;
   draft = f.lamp.asli.map(r => r.slice());
   f.lamp.periode = null;
@@ -3418,6 +3715,7 @@ document.getElementById('lamp-save').addEventListener('click', () => {
   }
   simpanDraft(f);
   f.deskripsi = deskEl.value.trim();
+  f.gambar = fotoDraft.slice();
   tutupLampiran();
   renderList();
   setStatus('data laporan disimpan.', 'ok');
@@ -3571,7 +3869,7 @@ btn.addEventListener('click', async () => {
       }
       if(base.deskripsi) xml = terapkanDeskripsi(xml, base.deskripsi);
       xml = await olahTautan(zip, xml, base);
-      await bungkus(zip, transformXmlTriwulan(xml, base.src, q),
+      await bungkus(zip, await sisipGambarLampiran(zip, transformXmlTriwulan(xml, base.src, q), base.gambar),
         transformNameTriwulan(base.name, base.src, q));
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
     } else {
@@ -3586,7 +3884,9 @@ btn.addEventListener('click', async () => {
         let xml = await zip.file('word/document.xml').async('string');
         xml = olahLampiran(olahNarasi(xml, f, dst), f, 'Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year);
         xml = await olahTautan(zip, xml, f);
-        await bungkus(zip, transformXml(xml, f.src, dst, aturTanggal(f)),
+        // gambar disisipkan setelah transformasi tanggal supaya keterangannya
+        // tidak ikut diubah oleh penggantian nama bulan
+        await bungkus(zip, await sisipGambarLampiran(zip, transformXml(xml, f.src, dst, aturTanggal(f)), f.gambar),
           transformName(f.name, f.src, dst));
       }
       zipName = 'Laporan SKP ' + BULAN[dst.mIdx] + ' ' + dst.year + '.zip';
@@ -3622,6 +3922,8 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   detectTautan, replaceTautan, replaceTautanRels,
   narasiDariBaris, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
   barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
+  objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
+  ruangHalaman, keteranganGambar, siapkanGambar, ukuranGambar,
   bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
   hurufKolom, angka2 };
 

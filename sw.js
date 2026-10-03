@@ -1,7 +1,7 @@
 // ESCAPES — service worker (offline shell)
 // Pustaka OCR (vendor/ocr, ~5 MB terpakai) sengaja TIDAK ikut di-precache:
 // baru diunduh saat gambar pertama dibaca, lalu tersimpan lewat cache aset.
-const VERSION = 'escapes-v3.3.0';
+const VERSION = 'escapes-v3.4.0';
 const SHELL_ASSETS = [
   './',
   './index.html',
