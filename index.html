@@ -3432,9 +3432,11 @@ function salinTabelKeLampiran(xml, donorXml, donor){
   return xml.slice(0, titik.pos) + judul + tbl + '<w:p/>' + xml.slice(titik.pos);
 }
 
-// Rincian kegiatan diseminasi pada laporan triwulan disajikan PER BULAN —
-// satu tabel berjudul "Bulan X" untuk tiap bulan, bukan satu tabel panjang.
-// Tabel dokumen dasar dipakai sebagai cetakan lalu digandakan.
+// Lampiran laporan triwulan memuat KETIGA lampiran bulanan apa adanya: tabel
+// dokumen dasar dipakai sebagai cetakan, lalu digandakan satu per bulan dengan
+// judul bulannya. Baris penutup tiap bulan (TOTAL BULAN INI) dibiarkan, karena
+// tabel itu memang lampiran bulan tersebut; angka satu triwulan dihitung
+// terpisah dari baris gabungan dan muncul pada isi laporan.
 function tabelPerBulan(xml, idx, g, label){
   const f = daftarTabelData(xml)[idx];
   if(!f) return xml;
@@ -3442,10 +3444,9 @@ function tabelPerBulan(xml, idx, g, label){
   const berNomor = /^no\.?$/i.test(String((g.contoh.labels || [])[0] || ''));
   let isi = '';
   g.bulan.forEach((t, i) => {
-    if(!t) return;
-    const rows = t.rows.filter(r => !barisTotal(r)).map(r => r.slice());
-    if(!rows.length) return;
-    if(berNomor) rows.forEach((r, k) => { r[0] = String(k + 1); });
+    if(!t || !t.rows.length) return;
+    const rows = t.rows.map(r => r.slice());
+    if(berNomor){ let n = 0; rows.forEach(r => { if(!barisTotal(r)) r[0] = String(++n); }); }
     isi += paraJudulLampiran(label[i]) + tulisTabel(tpl, f.head, rows, []);
   });
   return isi ? xml.slice(0, f.tblStart) + isi + xml.slice(f.tblEnd) : xml;
@@ -3453,15 +3454,20 @@ function tabelPerBulan(xml, idx, g, label){
 
 // bulanan: [{ tabel, xml }] urut bulan, unsur terakhir = dokumen dasar
 // label: judul tiap bulan ("Bulan Juli 2026", ...) untuk tabel per bulan
-// memulangkan { xml, utama } — utama = tabel data pertama berisi baris
-// gabungan ketiga bulan, dipakai menghitung angka pada isi laporan
+// memulangkan { xml, utama } — utama = baris gabungan ketiga bulan pada tabel
+// data pertama, dipakai menghitung angka pada isi laporan
 function gabungLampiranTriwulan(xml, bulanan, label){
   const dasar = bulanan[bulanan.length - 1];
+  // urutan tabel pada dokumen dasar, dicatat sebelum ada yang digandakan
+  const urutDasar = g => { const i = (dasar.tabel || []).findIndex(t => sidikTabel(t) === g.sidik);
+    return i < 0 ? 999 : i; };
   let utama = null;
   kelompokTabelBulanan(bulanan).forEach(g => {
     const rows = barisTriwulan(g);
     if(!rows) return;
-    let idx = (dasar.tabel || []).findIndex(t => sidikTabel(t) === g.sidik);
+    // dicari ulang pada xml berjalan: tabel yang sudah digandakan menggeser
+    // letak tabel berikutnya
+    let idx = daftarTabelData(xml).findIndex(t => sidikTabel(t) === g.sidik);
     if(idx < 0){
       // bulan dasar tidak punya tabel ini — tabelnya disalin dari bulan yang punya
       const iDonor = g.bulan.map((t, i) => t ? i : -1).filter(i => i >= 0).pop();
@@ -3469,11 +3475,10 @@ function gabungLampiranTriwulan(xml, bulanan, label){
       idx = daftarTabelData(xml).findIndex(t => sidikTabel(t) === g.sidik);
       if(idx < 0) return;
     }
-    xml = (label && isTabelDiseminasi(g.contoh.labels))
-      ? tabelPerBulan(xml, idx, g, label)
-      : tulisTabelKe(xml, idx, rows);
-    if(!utama || idx < utama.idx)
-      utama = { idx, labels: g.contoh.labels, rows, dateCols: g.contoh.dateCols || [] };
+    xml = label ? tabelPerBulan(xml, idx, g, label) : tulisTabelKe(xml, idx, rows);
+    const skor = urutDasar(g);
+    if(!utama || skor < utama.skor)
+      utama = { skor, labels: g.contoh.labels, rows, dateCols: g.contoh.dateCols || [] };
   });
   return { xml, utama };
 }
