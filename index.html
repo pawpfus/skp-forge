@@ -3414,29 +3414,69 @@ function barisTriwulan(g){
   return rows;
 }
 
-// tulis baris ke tabel ke-idx; dateCols sengaja kosong supaya jumlah baris
-// mengikuti data gabungan, bukan jumlah baris dokumen dasar
-function tulisTabelKe(xml, idx, rows){
-  const f = daftarTabelData(xml)[idx];
-  if(!f || !rows || !rows.length) return xml;
-  const tbl = tulisTabel(xml.slice(f.tblStart, f.tblEnd), f.head, rows, []);
-  return xml.slice(0, f.tblStart) + tbl + xml.slice(f.tblEnd);
+// Batas isi halaman lampiran (bagian landscape), rapi per paragraf: dari
+// sesudah paragraf pembawa sectPr bagian sebelumnya, sampai sebelum paragraf
+// pembawa sectPr landscape. landscapeRange memotong di tengah paragraf,
+// jadi tidak bisa dipakai untuk menyalin.
+function isiLampiran(xml){
+  const sects = [...xml.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)];
+  const land = sects.find(s => /w:orient="landscape"/.test(s[0]));
+  if(!land) return null;
+  const prev = sects.filter(s => s.index < land.index).pop();
+  let start = 0;
+  if(prev){
+    const p = xml.indexOf('</w:p>', prev.index + prev[0].length);
+    start = p >= 0 ? p + 6 : prev.index + prev[0].length;
+  }
+  const end = Math.max(xml.lastIndexOf('<w:p ', land.index), xml.lastIndexOf('<w:p>', land.index));
+  return end > start ? { start, end } : null;
 }
 
-// salin tabel utuh dari dokumen bulan lain ke halaman lampiran dokumen dasar
-// (dipakai bila bulan dasar belum punya tabel itu sama sekali)
-function salinTabelKeLampiran(xml, donorXml, donor){
-  const tbl = donorXml.slice(donor.tblStart, donor.tblEnd);
-  const titik = titikLampiran(xml);
-  const judul = donor.judul ? paraJudulLampiran(donor.judul) : '';
-  return xml.slice(0, titik.pos) + judul + tbl + '<w:p/>' + xml.slice(titik.pos);
+// tulis baris hasil suntingan editor ke tabel di dalam potongan lampiran
+function segarkanTabel(isi, tabel){
+  if(!tabel || !tabel.length) return isi;
+  return isi.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, tbl => {
+    const o = bacaTabel(tbl, 0, tbl.length);
+    if(!o) return tbl;
+    const t = tabel.find(q => sidikTabel(q) === sidikTabel(o));
+    return (t && t.rows && t.rows.length) ? tulisTabel(tbl, o.head, t.rows, []) : tbl;
+  });
 }
 
-// Lampiran laporan triwulan memuat KETIGA lampiran bulanan apa adanya: tabel
-// dokumen dasar dipakai sebagai cetakan, lalu digandakan satu per bulan dengan
-// judul bulannya. Baris penutup tiap bulan (TOTAL BULAN INI) dibiarkan, karena
-// tabel itu memang lampiran bulan tersebut; angka satu triwulan dihitung
-// terpisah dari baris gabungan dan muncul pada isi laporan.
+// Potongan dari dokumen lain membawa rujukan relasi (gambar, tautan) yang
+// bernomor menurut dokumen asalnya. Nomor itu tidak berlaku di dokumen dasar —
+// kalau dibiarkan, gambarnya hilang atau malah menunjuk berkas yang keliru.
+// Tiap rujukan didaftarkan ulang, dan bagian gambarnya ikut disalin.
+async function pindahkanRelasi(zip, isi, donorZip, donorRels, nomor){
+  const dipakai = [...new Set([...isi.matchAll(/(?:r:embed|r:id|r:link)="(rId\d+)"/g)].map(m => m[1]))];
+  const peta = {}, relBaru = [];
+  for(const rid of dipakai){
+    const def = donorRels.match(new RegExp('<Relationship[^>]*Id="' + rid + '"[^>]*/>'));
+    if(!def) continue;
+    const tipe = (def[0].match(/Type="([^"]*)"/) || [])[1] || '';
+    const target = unescXml((def[0].match(/Target="([^"]*)"/) || [])[1] || '');
+    const baru = 'rId' + (++nomor.rel);
+    let ganti = def[0].replace('Id="' + rid + '"', 'Id="' + baru + '"');
+    if(/\/image$/.test(tipe) && !/TargetMode="External"/.test(def[0])){
+      const berkas = donorZip.file('word/' + target.replace(/^\.\//, ''));
+      if(!berkas) continue;
+      const ext = ((target.match(/\.(\w+)$/) || [])[1] || 'png').toLowerCase();
+      const nama = 'escapes' + (++nomor.media) + '.' + ext;
+      zip.file('word/media/' + nama, await berkas.async('uint8array'));
+      nomor.ext.add(ext);
+      ganti = ganti.replace(/Target="[^"]*"/, 'Target="media/' + nama + '"');
+    }
+    relBaru.push(ganti);
+    peta[rid] = baru;
+  }
+  return { isi: isi.replace(/(r:embed|r:id|r:link)="(rId\d+)"/g,
+    (utuh, atr, rid) => peta[rid] ? atr + '="' + peta[rid] + '"' : utuh), relBaru };
+}
+
+// Tabel data di LUAR halaman lampiran — laporan statistik menaruh datanya di
+// badan laporan — tidak ikut terbawa penyalinan bagian lampiran, jadi tabelnya
+// digandakan tersendiri: satu per bulan dengan judul bulannya, memakai tabel
+// dokumen dasar sebagai cetakan.
 function tabelPerBulan(xml, idx, g, label){
   const f = daftarTabelData(xml)[idx];
   if(!f) return xml;
@@ -3452,35 +3492,76 @@ function tabelPerBulan(xml, idx, g, label){
   return isi ? xml.slice(0, f.tblStart) + isi + xml.slice(f.tblEnd) : xml;
 }
 
-// bulanan: [{ tabel, xml }] urut bulan, unsur terakhir = dokumen dasar
-// label: judul tiap bulan ("Bulan Juli 2026", ...) untuk tabel per bulan
+// Lampiran laporan triwulan memuat KETIGA lampiran bulanan apa adanya —
+// paragraf, GAMBAR, dan tabelnya — masing-masing di bawah judul bulannya.
+// Beberapa laporan (mis. Statistik Pangan) lampirannya memang hanya berupa
+// tangkapan layar, jadi menyalin tabel saja akan mengosongkan lampirannya.
+// bulanan: [{ xml, tabel, zip, rels }] urut bulan, unsur terakhir = dasar.
 // memulangkan { xml, utama } — utama = baris gabungan ketiga bulan pada tabel
-// data pertama, dipakai menghitung angka pada isi laporan
-function gabungLampiranTriwulan(xml, bulanan, label){
+// data pertama, dipakai menghitung angka pada isi laporan.
+async function gabungLampiranTriwulan(zip, xml, bulanan, label){
   const dasar = bulanan[bulanan.length - 1];
-  // urutan tabel pada dokumen dasar, dicatat sebelum ada yang digandakan
   const urutDasar = g => { const i = (dasar.tabel || []).findIndex(t => sidikTabel(t) === g.sidik);
     return i < 0 ? 999 : i; };
   let utama = null;
   kelompokTabelBulanan(bulanan).forEach(g => {
     const rows = barisTriwulan(g);
     if(!rows) return;
-    // dicari ulang pada xml berjalan: tabel yang sudah digandakan menggeser
-    // letak tabel berikutnya
-    let idx = daftarTabelData(xml).findIndex(t => sidikTabel(t) === g.sidik);
-    if(idx < 0){
-      // bulan dasar tidak punya tabel ini — tabelnya disalin dari bulan yang punya
-      const iDonor = g.bulan.map((t, i) => t ? i : -1).filter(i => i >= 0).pop();
-      xml = salinTabelKeLampiran(xml, bulanan[iDonor].xml, g.bulan[iDonor]);
-      idx = daftarTabelData(xml).findIndex(t => sidikTabel(t) === g.sidik);
-      if(idx < 0) return;
-    }
-    xml = label ? tabelPerBulan(xml, idx, g, label) : tulisTabelKe(xml, idx, rows);
     const skor = urutDasar(g);
     if(!utama || skor < utama.skor)
       utama = { skor, labels: g.contoh.labels, rows, dateCols: g.contoh.dateCols || [] };
   });
-  return { xml, utama };
+  const batasDasar = isiLampiran(xml);
+  if(!batasDasar || !label) return { xml, utama };
+
+  const relPath = 'word/_rels/document.xml.rels';
+  let rels = await zip.file(relPath).async('string');
+  let ct = await zip.file('[Content_Types].xml').async('string');
+  const nomor = {
+    rel: Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map(m => parseInt(m[1], 10))),
+    media: Math.max(0, ...Object.keys(zip.files)
+      .map(n => (n.match(/^word\/media\/\D*(\d+)\.\w+$/) || [])[1]).filter(v => v).map(Number)),
+    bentuk: Math.max(900, ...[...xml.matchAll(/<wp:docPr\s+id="(\d+)"/g)].map(m => parseInt(m[1], 10))),
+    ext: new Set()
+  };
+  const relBaru = [];
+  let isi = '';
+  for(let i = 0; i < bulanan.length; i++){
+    const b = bulanan[i];
+    const batas = isiLampiran(b.xml);
+    if(!batas) continue;
+    let potongan = segarkanTabel(b.xml.slice(batas.start, batas.end), b.tabel);
+    if(!potongan.trim()) continue;
+    if(b !== dasar){
+      // id bentuk gambar harus unik sedokumen
+      potongan = potongan.replace(/<wp:docPr\s+id="\d+"/g, () => '<wp:docPr id="' + (++nomor.bentuk) + '"');
+      const r = await pindahkanRelasi(zip, potongan, b.zip, b.rels, nomor);
+      potongan = r.isi;
+      relBaru.push(...r.relBaru);
+    }
+    isi += paraJudulLampiran(label[i]) + potongan;
+  }
+  if(!isi) return { xml, utama };
+  if(relBaru.length)
+    zip.file(relPath, rels.replace('</Relationships>', relBaru.join('') + '</Relationships>'));
+  nomor.ext.forEach(ext => {
+    if(new RegExp('<Default\\s+Extension="' + ext + '"', 'i').test(ct)) return;
+    const jenis = ext === 'jpg' ? 'jpeg' : ext === 'tif' ? 'tiff' : ext;
+    const baru = '<Default Extension="' + ext + '" ContentType="image/' + jenis + '"/>';
+    ct = /<Default\s/.test(ct) ? ct.replace(/<Default\s/, baru + '<Default ')
+                               : ct.replace('</Types>', baru + '</Types>');
+  });
+  zip.file('[Content_Types].xml', ct);
+  let keluar = xml.slice(0, batasDasar.start) + isi + xml.slice(batasDasar.end);
+  // tabel data di badan laporan digandakan per bulan; yang di halaman lampiran
+  // sudah terbawa bersama bagiannya, jadi dikecualikan lewat letaknya
+  kelompokTabelBulanan(bulanan).forEach(g => {
+    const batas = isiLampiran(keluar);
+    const idx = daftarTabelData(keluar).findIndex(t => sidikTabel(t) === g.sidik &&
+      (!batas || t.tblStart < batas.start || t.tblStart >= batas.end));
+    if(idx >= 0) keluar = tabelPerBulan(keluar, idx, g, label);
+  });
+  return { xml: keluar, utama };
 }
 
 // ===== UI =====
@@ -4020,7 +4101,9 @@ btn.addEventListener('click', async () => {
         const oz = o === base ? zip : await JSZip.loadAsync(o.file);
         let ox = o === base ? xml : await oz.file('word/document.xml').async('string');
         if(o !== base && desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
-        bulanan.push({ xml: ox, berkas: o,
+        const orel = oz.file('word/_rels/document.xml.rels');
+        bulanan.push({ xml: ox, berkas: o, zip: oz,
+          rels: orel ? await orel.async('string') : '',
           tabel: (o.tabel || []).map(t => Object.assign({}, t, { rows: samakanDesa(o, t.rows) })) });
       }
       xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
@@ -4031,7 +4114,7 @@ btn.addEventListener('click', async () => {
       xml = transformXmlTriwulan(xml, base.src, q);
       bulanan[bulanan.length - 1].xml = xml;
       const labelQ = g.map(f => 'Bulan ' + BULAN[f.src.mIdx] + ' ' + f.src.year);
-      const hasilQ = gabungLampiranTriwulan(xml, bulanan, labelQ);
+      const hasilQ = await gabungLampiranTriwulan(zip, xml, bulanan, labelQ);
       xml = hasilQ.xml;
       // angka pada isi laporan dihitung dari baris gabungan ketiga bulan,
       // bukan dari tabel yang tampil (rincian diseminasi dipecah per bulan)
@@ -4104,8 +4187,8 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
   objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
   ruangSect, titikLampiran, kisiGambar, keteranganGambar, siapkanGambar, ukuranGambar,
-  sidikTabel, tabelPeristiwa, kelompokTabelBulanan, barisTriwulan, tulisTabelKe,
-  salinTabelKeLampiran, gabungLampiranTriwulan, tabelPerBulan, perbaruiBarisTotal,
+  sidikTabel, tabelPeristiwa, kelompokTabelBulanan, barisTriwulan,
+  gabungLampiranTriwulan, isiLampiran, segarkanTabel, pindahkanRelasi, tabelPerBulan, perbaruiBarisTotal,
   bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
   hurufKolom, angka2 };
 
