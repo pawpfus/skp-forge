@@ -3418,9 +3418,32 @@ function salinTabelKeLampiran(xml, donorXml, donor){
   return xml.slice(0, titik.pos) + judul + tbl + '<w:p/>' + xml.slice(titik.pos);
 }
 
+// Rincian kegiatan diseminasi pada laporan triwulan disajikan PER BULAN —
+// satu tabel berjudul "Bulan X" untuk tiap bulan, bukan satu tabel panjang.
+// Tabel dokumen dasar dipakai sebagai cetakan lalu digandakan.
+function tabelPerBulan(xml, idx, g, label){
+  const f = daftarTabelData(xml)[idx];
+  if(!f) return xml;
+  const tpl = xml.slice(f.tblStart, f.tblEnd);
+  const berNomor = /^no\.?$/i.test(String((g.contoh.labels || [])[0] || ''));
+  let isi = '';
+  g.bulan.forEach((t, i) => {
+    if(!t) return;
+    const rows = t.rows.filter(r => !barisTotal(r)).map(r => r.slice());
+    if(!rows.length) return;
+    if(berNomor) rows.forEach((r, k) => { r[0] = String(k + 1); });
+    isi += paraJudulLampiran(label[i]) + tulisTabel(tpl, f.head, rows, []);
+  });
+  return isi ? xml.slice(0, f.tblStart) + isi + xml.slice(f.tblEnd) : xml;
+}
+
 // bulanan: [{ tabel, xml }] urut bulan, unsur terakhir = dokumen dasar
-function gabungLampiranTriwulan(xml, bulanan){
+// label: judul tiap bulan ("Bulan Juli 2026", ...) untuk tabel per bulan
+// memulangkan { xml, utama } — utama = tabel data pertama berisi baris
+// gabungan ketiga bulan, dipakai menghitung angka pada isi laporan
+function gabungLampiranTriwulan(xml, bulanan, label){
   const dasar = bulanan[bulanan.length - 1];
+  let utama = null;
   kelompokTabelBulanan(bulanan).forEach(g => {
     const rows = barisTriwulan(g);
     if(!rows) return;
@@ -3432,9 +3455,13 @@ function gabungLampiranTriwulan(xml, bulanan){
       idx = daftarTabelData(xml).findIndex(t => sidikTabel(t) === g.sidik);
       if(idx < 0) return;
     }
-    xml = tulisTabelKe(xml, idx, rows);
+    xml = (label && isTabelDiseminasi(g.contoh.labels))
+      ? tabelPerBulan(xml, idx, g, label)
+      : tulisTabelKe(xml, idx, rows);
+    if(!utama || idx < utama.idx)
+      utama = { idx, labels: g.contoh.labels, rows, dateCols: g.contoh.dateCols || [] };
   });
-  return xml;
+  return { xml, utama };
 }
 
 // ===== UI =====
@@ -3979,12 +4006,17 @@ btn.addEventListener('click', async () => {
       }
       xml = olahNarasi(xml, base, { label: labelTriwulan(q), year: q.year });
       xml = olahLampiran(xml, base, labelTriwulan(q), true); // baris masih milik bulan dasar
+      // label periode diubah lebih dulu: "Bulan September 2026" pada judul
+      // dokumen menjadi "Triwulan III", dan aturan itu tidak boleh mengenai
+      // judul bulan maupun tanggal pada lampiran gabungan yang menyusul
+      xml = transformXmlTriwulan(xml, base.src, q);
       bulanan[bulanan.length - 1].xml = xml;
-      xml = gabungLampiranTriwulan(xml, bulanan);
-      // tabel lampiran kini berisi tiga bulan: angka pada isi laporan dihitung
-      // dari tabel gabungan agar mewakili satu triwulan penuh
-      const semuaQ = daftarTabelData(xml);
-      const utamaQ = semuaQ[0];
+      const labelQ = g.map(f => 'Bulan ' + BULAN[f.src.mIdx] + ' ' + f.src.year);
+      const hasilQ = gabungLampiranTriwulan(xml, bulanan, labelQ);
+      xml = hasilQ.xml;
+      // angka pada isi laporan dihitung dari baris gabungan ketiga bulan,
+      // bukan dari tabel yang tampil (rincian diseminasi dipecah per bulan)
+      const utamaQ = hasilQ.utama;
       if(utamaQ && base.tipe){
         if(isTabelDiseminasi(utamaQ.labels))
           xml = integrasiDiseminasi(xml, kegiatanDariBaris(utamaQ.rows, utamaQ.labels), labelTriwulan(q));
@@ -3996,7 +4028,7 @@ btn.addEventListener('click', async () => {
       if(deskQ) xml = terapkanDeskripsi(xml, deskQ);
       const gambarQ = g.reduce((a, f) => a.concat(f.gambar || []), []);
       xml = await olahTautan(zip, xml, base);
-      await bungkus(zip, await sisipGambarLampiran(zip, transformXmlTriwulan(xml, base.src, q), gambarQ),
+      await bungkus(zip, await sisipGambarLampiran(zip, xml, gambarQ),
         transformNameTriwulan(base.name, base.src, q));
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
     } else {
@@ -4052,7 +4084,7 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
   ruangSect, titikLampiran, kisiGambar, keteranganGambar, siapkanGambar, ukuranGambar,
   sidikTabel, tabelPeristiwa, kelompokTabelBulanan, barisTriwulan, tulisTabelKe,
-  salinTabelKeLampiran, gabungLampiranTriwulan, perbaruiBarisTotal,
+  salinTabelKeLampiran, gabungLampiranTriwulan, tabelPerBulan, perbaruiBarisTotal,
   bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
   hurufKolom, angka2 };
 
