@@ -2911,14 +2911,28 @@ function integrasiDiseminasi(xml, keg, labelPeriode){
   ];
   xml = gantiParagrafSetelahJudul(xml, /^4\.2\s*Saran/i, saran);
 
-  // --- 5.1 Permasalahan & 5.2 Upaya (satu baris per kegiatan yang berkendala) ---
+  // --- 5.1 Permasalahan & 5.2 Upaya ---
+  // Satu baris per PERMASALAHAN, bukan per kegiatan. Pada laporan triwulan
+  // masalah yang sama berulang di beberapa bulan; menuliskannya berkali-kali
+  // memanjangkan tabel tanpa menambah keterangan. Materi dan peserta kegiatan
+  // yang mengalami masalah itu digabungkan ke satu baris.
   const berkendala = keg.filter(k => k.masalah);
   if(berkendala.length){
+    const peta = [];
+    berkendala.forEach(k => {
+      const kunci = String(k.masalah).trim().toLowerCase();
+      let g = peta.find(p => p.kunci === kunci);
+      if(!g){ g = { kunci, masalah: k.masalah, materi: [], solusi: [], peserta: [] }; peta.push(g); }
+      g.materi.push(k.materi);
+      g.solusi.push(k.solusi);
+      g.peserta.push(k.peserta);
+    });
     xml = gantiTabelSetelahJudul(xml, /^5\.1\s*Permasalahan/i,
-      berkendala.map((k, i) => [String(i + 1), k.materi, k.masalah, '']));
+      peta.map((g, i) => [String(i + 1), daftarKata(unikRapi(g.materi)), g.masalah, '']));
     xml = gantiTabelSetelahJudul(xml, /^5\.2\s*Upaya/i,
-      berkendala.map((k, i) => [String(i + 1), kalimatPertama(k.masalah), k.solusi,
-        unikRapi(['Penyuluh Pertanian', k.peserta]).join(', ')]));
+      peta.map((g, i) => [String(i + 1), kalimatPertama(g.masalah),
+        unikRapi(g.solusi).join(' '),
+        unikRapi(['Penyuluh Pertanian'].concat(g.peserta)).join(', ')]));
   }
 
   // --- 5.3 Output ---
@@ -4016,11 +4030,13 @@ btn.addEventListener('click', async () => {
       xml = hasilQ.xml;
       // angka pada isi laporan dihitung dari baris gabungan ketiga bulan,
       // bukan dari tabel yang tampil (rincian diseminasi dipecah per bulan)
+      // laporan pelaksanaan tugas & fungsi tidak punya tipe narasi sendiri,
+      // jadi penyelarasan diseminasi tidak boleh digerbangkan pada tipe
       const utamaQ = hasilQ.utama;
-      if(utamaQ && base.tipe){
+      if(utamaQ){
         if(isTabelDiseminasi(utamaQ.labels))
           xml = integrasiDiseminasi(xml, kegiatanDariBaris(utamaQ.rows, utamaQ.labels), labelTriwulan(q));
-        else
+        else if(base.tipe)
           xml = integrasiData(xml, base.tipe.key, utamaQ, labelTriwulan(q), desaIn || base.desa || null);
       }
       // deskripsi & gambar lampiran ketiga bulan ikut terbawa, urut bulan
