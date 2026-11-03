@@ -2362,6 +2362,33 @@ function barisDiseminasi(kegiatan, labels){
   }));
 }
 
+// Ringkasan kegiatan untuk kolom DESKRIPSI PELAKSANAAN. Tanpa ini yang terisi
+// adalah potongan mentah dari kop dokumen sumber ("b. Pangkat/Golongan : ...")
+// — bukan uraian, dan tidak menyebut berapa kegiatan yang dilaporkan.
+function narasiKegiatan(keg){
+  const n = (keg || []).length;
+  if(!n) return '';
+  const materi = unikRapi(keg.map(k => k.materi));
+  const lokasi = unikRapi(keg.map(k => k.lokasi));
+  const metode = unikRapi(keg.map(k => awalKecil(k.metode)));
+  const hari = unikRapi(keg.map(k => k.tanggal));
+  // parseDiseminasi menyimpan masalah di dalam "hasil"; kegiatanDariBaris
+  // sudah memisahkannya — keduanya dilayani
+  const ambilMasalah = k => k.masalah ||
+    ((String(k.hasil || '').match(/Masalah\s*:\s*([\s\S]*?)(?:\s*Solusi\s*:|$)/i) || [])[1] || '').trim();
+  const masalah = unikRapi(keg.map(k => kalimatPertama(ambilMasalah(k))));
+  const bagian = [];
+  bagian.push('Sebanyak ' + n + ' kegiatan diseminasi informasi pertanian telah dilaksanakan' +
+    (hari.length ? ' pada ' + hari.length + ' hari kegiatan' : '') +
+    (materi.length ? ', meliputi ' + daftarKata(materi.map(awalKecil)) : '') + '.');
+  if(lokasi.length) bagian.push('Kegiatan berlangsung di ' + daftarKata(lokasi) +
+    (metode.length ? ' dengan metode ' + daftarKata(metode) : '') +
+    ', dan seluruhnya terdokumentasi pada lampiran laporan ini.');
+  if(masalah.length) bagian.push('Permasalahan yang ditemukan mencakup ' +
+    daftarKata(masalah.map(awalKecil)) + ', yang seluruhnya telah ditindaklanjuti.');
+  return bagian.join('\n\n');
+}
+
 // satu pintu impor: pilih pembaca sesuai jenis berkas, hasilkan baris tabel
 // yang sudah sejajar dengan kolom lampiran laporan tujuan
 // ===== DESKRIPSI: kalimat naratif dari berkas yang diunggah =====
@@ -2523,8 +2550,9 @@ async function bacaBerkasLampiran(file, labels, lapor, ctx){
     const polos = baris.map(t => t.replace(/ {2,}/g, ' ').trim()).filter(t => t);
     const teks = narasiDariBaris(polos);
     const keg = parseDiseminasi(polos);
+    // uraian disusun dari kegiatannya, bukan dari potongan kalimat mentah
     if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
-      jenis: 'kegiatan diseminasi' + asal, teks };
+      jenis: 'kegiatan diseminasi' + asal, teks: narasiKegiatan(keg) };
     // batas kolom hanya terbaca pada jalur OCR (spasi ganda dari kotak kata)
     if(pindaian){
       const tabel = tabelDariTeks(baris.join('\n'));
@@ -2544,7 +2572,7 @@ async function bacaBerkasLampiran(file, labels, lapor, ctx){
     const teks = narasiDariBaris(paraTeks(xml));
     const keg = parseDiseminasi(xml);
     if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
-      jenis: 'kegiatan diseminasi', teks };
+      jenis: 'kegiatan diseminasi', teks: narasiKegiatan(keg) };
     const tabel = tabelDariDocx(xml);
     if(tabel){
       const rows = petakanTabel(tabel, labels);
@@ -4414,7 +4442,7 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   integrasiData, RINGKAS, angkaId, fmtId, bacaTabelSetelahJudul, selaraskanBaris,
   sisipBarisAwal, selaraskanOutput,
   detectTautan, replaceTautan, replaceTautanRels,
-  narasiDariBaris, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
+  narasiDariBaris, narasiKegiatan, tabelDariTeks, sisipParagrafSetelahJudul, terapkanDeskripsi, RE_GAMBAR,
   barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
   objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
   ruangSect, titikLampiran, kisiGambar, keteranganGambar, siapkanGambar, ukuranGambar,
