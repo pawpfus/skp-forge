@@ -2391,8 +2391,14 @@ function tabelDariTeks(teks){
   const freq = {};
   cand.forEach(a => { freq[a.length] = (freq[a.length] || 0) + 1; });
   const kol = parseInt(Object.keys(freq).sort((a, b) => freq[b] - freq[a] || b - a)[0], 10);
-  const rows = cand.filter(a => Math.abs(a.length - kol) <= 1)
-    .map(a => a.length === kol ? a : a.concat(new Array(kol - a.length).fill('')));
+  const rows = cand.filter(a => Math.abs(a.length - kol) <= 1).map(a => {
+    if(a.length === kol) return a;
+    // Baris yang terpecah satu kolom lebih banyak biasanya kena pemisah palsu
+    // — jarak ganda di tengah nama ("Ubi  Kayu"). Ekornya disatukan kembali ke
+    // sel terakhir supaya tidak ada teks yang hilang dan bentuknya tetap sama.
+    if(a.length > kol) return a.slice(0, kol - 1).concat(a.slice(kol - 1).join(' '));
+    return a.concat(new Array(kol - a.length).fill(''));
+  });
   return rows.length >= 2 ? rows : null;
 }
 
