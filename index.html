@@ -332,6 +332,13 @@
         placeholder="Kalimat di sini ditambahkan ke bagian 3. PELAKSANAAN KEGIATAN pada laporan. Terisi sendiri dari berkas yang diunggah, boleh disunting atau diketik langsung."></textarea>
       <label id="lamp-foto-label" hidden>GAMBAR LAMPIRAN</label>
       <div class="lamp-foto-bar" id="lamp-foto-bar" hidden></div>
+      <span class="lamp-periode" id="lamp-ganti-baris" hidden>GAMBAR BAWAAN LAPORAN
+        <select id="lamp-ganti">
+          <option value="ganti" selected>GANTI DENGAN GAMBAR DI ATAS</option>
+          <option value="tambah">BIARKAN, TAMBAHKAN DI HALAMAN LAMPIRAN</option>
+        </select>
+        <span class="lamp-hint" id="lamp-ganti-ket"></span>
+      </span>
     </div>
     <div class="lamp-foot">
       <button id="lamp-impor" title="BACA isi berkas untuk mengisi tabel &amp; deskripsi. Gambar (.jpg/.png) dibaca tulisannya lewat OCR, lalu gambarnya sekalian dilampirkan ke laporan.">Unggah dokumen</button>
@@ -2713,6 +2720,118 @@ function kisiGambar(sel, lebarKolom){
     '<w:tblGrid>' + grid + '</w:tblGrid>' + baris + '</w:tbl>';
 }
 
+// Gambar bawaan pada halaman lampiran dokumen — pada laporan bulanan isinya
+// tangkapan layar data BULAN LALU. Tiap gambar berdiri sendiri dalam satu
+// paragraf, jadi paragrafnya bisa diganti atau dibuang utuh.
+// teks paragraf berisi terakhir sebelum suatu titik — dipakai mengenali
+// gambar yang berada di bawah judul "LAMPIRAN ..."
+function judulSebelum(xml, pos){
+  const sblm = xml.slice(Math.max(0, pos - 8000), pos);
+  const para = [...sblm.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)]
+    .map(q => [...q[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(a => a[1]).join('').trim())
+    .filter(t => t);
+  return unescXml(para[para.length - 1] || '');
+}
+
+function gambarLampiranDok(xml){
+  const b = isiLampiran(xml);
+  const out = [];
+  for(const m of xml.matchAll(/<w:drawing>[\s\S]*?<\/w:drawing>/g)){
+    // gambar lampiran = yang ada di halaman lampiran (landscape), atau yang
+    // berada di bawah judul "LAMPIRAN ..." pada badan laporan. Kop, garis
+    // kepala, dan tanda tangan tidak pernah lolos saringan ini.
+    const diLampiran = b && m.index >= b.start && m.index < b.end;
+    if(!diLampiran && !/^LAMPIRAN\b/i.test(judulSebelum(xml, m.index))) continue;
+    const awal = Math.max(xml.lastIndexOf('<w:p ', m.index), xml.lastIndexOf('<w:p>', m.index));
+    const akhir = xml.indexOf('</w:p>', m.index + m[0].length);
+    if(awal < 0 || akhir < 0) continue;
+    const ext = m[0].match(/<wp:extent cx="(\d+)" cy="(\d+)"/);
+    out.push({
+      paraAwal: awal, paraAkhir: akhir + 6,
+      drawAwal: m.index, drawAkhir: m.index + m[0].length,
+      cx: ext ? parseInt(ext[1], 10) : 0, cy: ext ? parseInt(ext[2], 10) : 0,
+      nama: (m[0].match(/<pic:cNvPr[^>]*name="([^"]*)"/) || [])[1] || ''
+    });
+  }
+  return out;
+}
+
+// Ganti gambar lampiran bawaan dengan gambar unggahan, satu lawan satu urut
+// letaknya. Lebar kotaknya dipertahankan supaya tata halaman tidak berubah,
+// tingginya mengikuti nisbah gambar baru supaya tidak gepeng. Gambar lama
+// yang tidak kebagian pengganti dibuang — isinya data bulan lalu.
+async function gantiGambarLampiran(zip, xml, gambar){
+  const lama = gambarLampiranDok(xml);
+  const pakai = Math.min(lama.length, (gambar || []).length);
+  if(!lama.length || !pakai) return { xml, sisa: gambar || [], diganti: 0, dibuang: 0 };
+  const relPath = 'word/_rels/document.xml.rels';
+  let rels = await zip.file(relPath).async('string');
+  let ct = await zip.file('[Content_Types].xml').async('string');
+  let noRel = Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map(m => parseInt(m[1], 10)));
+  let noMedia = Math.max(0, ...Object.keys(zip.files)
+    .map(n => (n.match(/^word\/media\/\D*(\d+)\.\w+$/) || [])[1]).filter(v => v).map(Number));
+  const relBaru = [], jenisExt = new Set();
+  // dikerjakan dari belakang supaya letak potongan di depannya tidak bergeser
+  for(let i = lama.length - 1; i >= 0; i--){
+    const o = lama[i];
+    if(i >= pakai){ xml = xml.slice(0, o.paraAwal) + xml.slice(o.paraAkhir); continue; }
+    const g = await siapkanGambar(gambar[i]);
+    const berkas = 'escapes' + (++noMedia) + '.' + g.ext;
+    zip.file('word/media/' + berkas, g.blob);
+    const rid = 'rId' + (++noRel);
+    relBaru.push('<Relationship Id="' + rid + '" Type="http://schemas.openxmlformats.org/' +
+      'officeDocument/2006/relationships/image" Target="media/' + berkas + '"/>');
+    jenisExt.add(g.ext);
+    const u = g.ukuran || { w: 4, h: 3 };
+    const cx = o.cx || 5850890;
+    const cy = Math.round(cx * u.h / u.w);
+    const baru = xml.slice(o.drawAwal, o.drawAkhir)
+      .replace(/r:embed="rId\d+"/, 'r:embed="' + rid + '"')
+      .replace(/<wp:extent cx="\d+" cy="\d+"\/>/, '<wp:extent cx="' + cx + '" cy="' + cy + '"/>')
+      .replace(/<a:ext cx="\d+" cy="\d+"\/>/, '<a:ext cx="' + cx + '" cy="' + cy + '"/>')
+      .replace(/(<pic:cNvPr[^>]*name=")[^"]*(")/, '$1' + escXml(gambar[i].name || 'Gambar') + '$2');
+    xml = xml.slice(0, o.drawAwal) + baru + xml.slice(o.drawAkhir);
+  }
+  rels = rels.replace('</Relationships>', relBaru.join('') + '</Relationships>');
+  rels = await buangMediaTakTerpakai(zip, xml, rels);
+  zip.file(relPath, rels);
+  jenisExt.forEach(e => {
+    if(new RegExp('<Default\\s+Extension="' + e + '"', 'i').test(ct)) return;
+    const jenis = e === 'jpg' ? 'jpeg' : e === 'tif' ? 'tiff' : e;
+    const baru = '<Default Extension="' + e + '" ContentType="image/' + jenis + '"/>';
+    ct = /<Default\s/.test(ct) ? ct.replace(/<Default\s/, baru + '<Default ')
+                               : ct.replace('</Types>', baru + '</Types>');
+  });
+  zip.file('[Content_Types].xml', ct);
+  return { xml, sisa: gambar.slice(pakai), diganti: pakai, dibuang: Math.max(0, lama.length - pakai) };
+}
+
+// Gambar bulan lalu yang sudah diganti tidak lagi dirujuk dokumen, tetapi
+// berkasnya masih ikut terbawa — menggemukkan laporan dan menyeret data lama
+// yang tak terlihat. Relasi dan bagian medianya dibuang, kecuali berkasnya
+// masih dirujuk bagian lain (kop, catatan kaki) lewat daftar relasinya sendiri.
+async function buangMediaTakTerpakai(zip, xml, rels){
+  const dipakai = new Set([...xml.matchAll(/(?:r:embed|r:id|r:link)="(rId\d+)"/g)].map(m => m[1]));
+  // berkas media yang masih dipakai bagian lain (kop, catatan kaki) tidak
+  // boleh dihapus walau dokumen utama tak lagi merujuknya
+  const dipakaiLain = new Set();
+  for(const n of Object.keys(zip.files)){
+    if(!/^word\/_rels\/.+\.rels$/.test(n) || n === 'word/_rels/document.xml.rels') continue;
+    const isi = await zip.file(n).async('string');
+    for(const m of isi.matchAll(/Target="([^"]*)"/g)) dipakaiLain.add(unescXml(m[1]));
+  }
+  return rels.replace(/<Relationship[^>]*\/>/g, def => {
+    const id = (def.match(/Id="(rId\d+)"/) || [])[1];
+    const tipe = (def.match(/Type="([^"]*)"/) || [])[1] || '';
+    if(!id || dipakai.has(id) || !/\/image$/.test(tipe) || /TargetMode="External"/.test(def)) return def;
+    const target = unescXml((def.match(/Target="([^"]*)"/) || [])[1] || '');
+    if(dipakaiLain.has(target)) return def;
+    const jalur = 'word/' + target.replace(/^\.\//, '');
+    if(zip.file(jalur)) zip.remove(jalur);
+    return '';
+  });
+}
+
 // nama berkas kamera (IMG_2026…, DSC01234, 20260915_151521) tidak bermakna
 // sebagai keterangan gambar, jadi dibiarkan kosong
 const RE_NAMA_KAMERA = /^(img|dsc|dscn|pxl|photo|foto|image|gambar|screenshot|whatsapp(\s*image)?)[\s_-]*[\d\s_.:-]*$/i;
@@ -3682,7 +3801,8 @@ async function addFiles(fileList){
       tabel.forEach(t => { t.asli = t.rows.map(r => r.slice()); t.edited = false; });
       files.push({ file, name: file.name, src: detectSource(xml, file.name),
         tipe: detectTipe(file.name), desa: detectDesa(xml), tautan: detectTautan(xml),
-        tabel, lamp: tabel[0] || null, deskripsi: '', gambar: [] });
+        tabel, lamp: tabel[0] || null, deskripsi: '', gambar: [],
+        gambarDok: gambarLampiranDok(xml), gantiGambar: true });
     } catch(e){
       setStatus('gagal membaca ' + file.name + ' — ' + (e.message || e), 'err');
     }
@@ -3714,6 +3834,20 @@ function gambarDaftarFoto(){
   fotoBar.hidden = !n;
   document.getElementById('lamp-foto-label').hidden = !n;
   tombolFoto.textContent = n ? 'Gambar lampiran (' + n + ')' : '+ Gambar lampiran';
+  // pilihan ganti/tambah hanya berarti bila dokumennya memang punya gambar
+  // bawaan DAN ada gambar unggahan untuk menggantinya
+  const bawaan = (files[lampIdx] && files[lampIdx].gambarDok) || [];
+  const tampil = !!n && !!bawaan.length && selJenis.value !== 'triwulan';
+  document.getElementById('lamp-ganti-baris').hidden = !tampil;
+  if(tampil){
+    const mode = document.getElementById('lamp-ganti').value;
+    const nama = bawaan.map(o => o.nama).filter(t => t).join(', ');
+    document.getElementById('lamp-ganti-ket').textContent = mode === 'ganti'
+      ? bawaan.length + ' gambar bawaan' + (nama ? ' (' + nama + ')' : '') + ' diganti ' +
+        Math.min(n, bawaan.length) + (n < bawaan.length ? '; sisanya dibuang' : '') +
+        (n > bawaan.length ? '; ' + (n - bawaan.length) + ' gambar lebih ditambahkan di akhir' : '')
+      : bawaan.length + ' gambar bawaan dibiarkan, ' + n + ' gambar baru ditambahkan';
+  }
   fotoBar.innerHTML = fotoDraft.map((g, i) => '<span class="chip"><span>' + escHtml(g.name) +
     '</span><button data-foto="' + i + '" title="buang gambar ini">&#10005;</button></span>').join('');
   fotoBar.querySelectorAll('[data-foto]').forEach(b => b.addEventListener('click', () => {
@@ -3721,6 +3855,7 @@ function gambarDaftarFoto(){
     gambarDaftarFoto();
   }));
 }
+document.getElementById('lamp-ganti').addEventListener('change', gambarDaftarFoto);
 tombolFoto.addEventListener('click', () => fotoFile.click());
 // gambar diuji baca saat dipilih supaya berkas rusak ketahuan sekarang,
 // bukan saat laporan digenerate
@@ -3803,6 +3938,7 @@ function bukaLampiran(i){
   lampIdx = i;
   deskEl.value = f.deskripsi || '';
   fotoDraft = (f.gambar || []).slice();
+  document.getElementById('lamp-ganti').value = f.gantiGambar === false ? 'tambah' : 'ganti';
   gambarDaftarFoto();
   document.getElementById('lamp-sub').textContent = f.name;
   // pemilih tabel muncul bila laporannya punya lebih dari satu tabel data
@@ -4016,6 +4152,7 @@ document.getElementById('lamp-save').addEventListener('click', () => {
   simpanDraft(f);
   f.deskripsi = deskEl.value.trim();
   f.gambar = fotoDraft.slice();
+  f.gantiGambar = document.getElementById('lamp-ganti').value !== 'tambah';
   tutupLampiran();
   renderList();
   setStatus('data laporan disimpan.', 'ok');
@@ -4221,9 +4358,17 @@ btn.addEventListener('click', async () => {
           let xml = await zip.file('word/document.xml').async('string');
           xml = olahLampiran(olahNarasi(xml, f, dst), f, 'Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year);
           xml = await olahTautan(zip, xml, f);
-          // gambar disisipkan setelah transformasi tanggal supaya keterangannya
+          // gambar diolah setelah transformasi tanggal supaya keterangannya
           // tidak ikut diubah oleh penggantian nama bulan
-          await bungkus(zip, await sisipGambarLampiran(zip, transformXml(xml, f.src, dst, aturTanggal(f)), f.gambar),
+          let jadi = transformXml(xml, f.src, dst, aturTanggal(f));
+          let sisa = f.gambar || [];
+          // gambar bawaan laporan adalah tangkapan layar data bulan lalu;
+          // bila diminta, yang diunggah menggantikannya di tempat semula
+          if(sisa.length && f.gantiGambar !== false){
+            const r = await gantiGambarLampiran(zip, jadi, sisa);
+            jadi = r.xml; sisa = r.sisa;
+          }
+          await bungkus(zip, await sisipGambarLampiran(zip, jadi, sisa),
             transformName(f.name, f.src, dst));
         } catch(e){
           const pesan = (e && e.message) ? e.message : String(e);
@@ -4272,6 +4417,7 @@ window._skp = { detectSource, transformXml, transformName, lastDay,
   barisDariBlokOcr, bacaBerkasLampiran, daftarTabelData, tabelBaku, bacaTabel,
   objekPdf, streamPdf, gambarPdf, bacaHalaman, sisipGambarLampiran, saringDerauOcr,
   ruangSect, titikLampiran, kisiGambar, keteranganGambar, siapkanGambar, ukuranGambar,
+  gambarLampiranDok, gantiGambarLampiran, buangMediaTakTerpakai,
   sidikTabel, tabelPeristiwa, kelompokTabelBulanan, barisTriwulan,
   gabungLampiranTriwulan, isiLampiran, segarkanTabel, pindahkanRelasi, tabelPerBulan, perbaruiBarisTotal,
   bukuXlsx, lembarLtt, blokDesaLtt, harianLtt, tabelDariBukuLtt, barisLampiranLtt,
