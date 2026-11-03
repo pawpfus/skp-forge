@@ -334,12 +334,12 @@
       <div class="lamp-foto-bar" id="lamp-foto-bar" hidden></div>
     </div>
     <div class="lamp-foot">
-      <button id="lamp-impor">Unggah dokumen</button>
+      <button id="lamp-impor" title="BACA isi berkas untuk mengisi tabel &amp; deskripsi. Gambar (.jpg/.png) dibaca tulisannya lewat OCR — gambarnya sendiri tidak ikut ke laporan.">Unggah dokumen</button>
       <input type="file" id="lamp-impor-file"
-        accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
-      <button id="lamp-foto">+ Gambar lampiran</button>
+        accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.jfif,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
+      <button id="lamp-foto" title="LAMPIRKAN foto ke halaman lampiran laporan. Isinya tidak dibaca.">+ Gambar lampiran</button>
       <input type="file" id="lamp-foto-file" multiple
-        accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
+        accept=".jpg,.jpeg,.jfif,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
       <button id="lamp-add">+ Baris</button>
       <button id="lamp-reset">Kembalikan asli</button>
       <span class="lamp-periode" id="lamp-pilih" hidden>TABEL
@@ -2392,7 +2392,12 @@ function tabelDariTeks(teks){
 // ===== OCR: baca tulisan pada foto/pindaian =====
 // Pustakanya besar (~5 MB terpakai) jadi baru diunduh saat gambar pertama
 // diunggah, lalu tersimpan di cache service worker untuk pemakaian offline.
-const RE_GAMBAR = /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i;
+// .jfif/.jpe/.pjpeg hanyalah JPEG dengan nama lain — Windows kerap memberi
+// nama itu pada gambar yang disimpan dari peramban
+const RE_GAMBAR = /\.(jpe?g|jfif|jpe|pjpeg|png|webp|bmp|gif|tiff?)$/i;
+// format kamera Apple; peramban tidak bisa membukanya sehingga tidak ada
+// gunanya diteruskan ke OCR — pesannya dibuat jelas sejak awal
+const RE_HEIC = /\.(heic|heif)$/i;
 let ocrDimuat = null;
 function muatOcr(){
   if(window.Tesseract) return Promise.resolve();
@@ -2572,6 +2577,7 @@ async function bacaBerkasLampiran(file, labels, lapor, ctx){
       teks: narasiDariBaris(isi.split(/\r?\n/)) };
     return { rows, jumlah: rows.length, jenis: 'baris tabel' };
   }
+  if(RE_HEIC.test(nama)) throw new Error('format .heic/.heif dari kamera Apple tidak bisa dibuka peramban — buka fotonya lalu simpan/ekspor sebagai .jpg, baru diunggah');
   throw new Error('jenis berkas belum didukung — pakai gambar (.jpg/.png), .pdf, .docx, .xlsx, atau .csv');
 }
 
@@ -2621,7 +2627,9 @@ async function ukuranGambar(blob){
 // Word hanya menampilkan sebagian format gambar; selain JPEG/PNG disandikan
 // ulang menjadi PNG lewat canvas supaya pasti tampil saat dokumen dibuka
 async function siapkanGambar(file){
-  const bawaan = /\.png$/i.test(file.name) ? 'png' : /\.jpe?g$/i.test(file.name) ? 'jpeg' : null;
+  // .jfif/.jpe/.pjpeg sudah JPEG, jadi dipakai apa adanya tanpa disandikan ulang
+  const bawaan = /\.png$/i.test(file.name) ? 'png'
+    : /\.(jpe?g|jfif|jpe|pjpeg)$/i.test(file.name) ? 'jpeg' : null;
   if(bawaan) return { blob: file, ext: bawaan, ukuran: await ukuranGambar(file) };
   const bmp = await createImageBitmap(file);
   const kanvas = document.createElement('canvas');
@@ -3735,7 +3743,11 @@ fotoFile.addEventListener('change', async () => {
     } catch(e){ tolak.push(g.name); }
   }
   gambarDaftarFoto();
-  hint.textContent = (tolak.length ? 'tidak bisa dibaca sebagai gambar: ' + tolak.join(', ') + '. ' : '') +
+  const heic = tolak.filter(n => RE_HEIC.test(n));
+  hint.textContent = (heic.length ? 'format .heic/.heif tidak bisa dibuka peramban (' + heic.join(', ') +
+      ') — simpan ulang sebagai .jpg lebih dulu. ' : '') +
+    (tolak.length > heic.length ? 'tidak bisa dibaca sebagai gambar: ' +
+      tolak.filter(n => !RE_HEIC.test(n)).join(', ') + '. ' : '') +
     (fotoDraft.length ? fotoDraft.length + ' gambar akan disisipkan di halaman lampiran laporan — tekan SIMPAN'
                       : 'belum ada gambar yang terpilih');
 });
