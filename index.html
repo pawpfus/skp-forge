@@ -334,7 +334,7 @@
       <div class="lamp-foto-bar" id="lamp-foto-bar" hidden></div>
     </div>
     <div class="lamp-foot">
-      <button id="lamp-impor" title="BACA isi berkas untuk mengisi tabel &amp; deskripsi. Gambar (.jpg/.png) dibaca tulisannya lewat OCR — gambarnya sendiri tidak ikut ke laporan.">Unggah dokumen</button>
+      <button id="lamp-impor" title="BACA isi berkas untuk mengisi tabel &amp; deskripsi. Gambar (.jpg/.png) dibaca tulisannya lewat OCR, lalu gambarnya sekalian dilampirkan ke laporan.">Unggah dokumen</button>
       <input type="file" id="lamp-impor-file"
         accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.jfif,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
       <button id="lamp-foto" title="LAMPIRKAN foto ke halaman lampiran laporan. Isinya tidak dibaca.">+ Gambar lampiran</button>
@@ -3971,9 +3971,22 @@ imporFile.addEventListener('change', async () => {
       gambarGrid();
     }
     if(hasil.teks) deskEl.value = hasil.teks;
+    // Berkas gambar sekalian dilampirkan: tulisannya sudah dibaca jadi
+    // deskripsi, dan fotonya sendiri jadi bukti yang sepadan dengan deskripsi
+    // itu. Berkas dokumen (.pdf/.docx/.xlsx) tidak — isinya sudah masuk tabel.
+    let lampir = false;
+    if(RE_GAMBAR.test(file.name.toLowerCase()) &&
+       !fotoDraft.some(g => g.name === file.name && g.size === file.size)){
+      const salinan = new Blob([await file.arrayBuffer()], { type: file.type || 'image/jpeg' });
+      salinan.name = file.name;
+      fotoDraft.push(salinan);
+      gambarDaftarFoto();
+      lampir = true;
+    }
     hint.textContent = hasil.jumlah + ' ' + hasil.jenis + ' terbaca' +
       (hasil.rows && hasil.rows.length ? '' : ' — tabel tidak ikut terisi, isi manual bila perlu') +
-      (hasil.teks ? '; deskripsi ikut terisi' : '') + ' — periksa lalu tekan SIMPAN';
+      (hasil.teks ? '; deskripsi ikut terisi' : '') +
+      (lampir ? '; gambarnya sekalian dilampirkan' : '') + ' — periksa lalu tekan SIMPAN';
   } catch(e){
     hint.textContent = 'gagal: ' + (e.message || e);
   }
