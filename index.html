@@ -2735,7 +2735,12 @@ async function sisipGambarLampiran(zip, xml, gambar, judul){
   const tinggiMaks = Math.round(ruang.tinggi * (titik.landscape ? 0.4 : 0.42)) * EMU_TWIP;
   const relBaru = [], sel = [];
   for(let i = 0; i < gambar.length; i++){
-    const g = await siapkanGambar(gambar[i]);
+    let g;
+    try { g = await siapkanGambar(gambar[i]); }
+    catch(e){
+      throw new Error('gambar lampiran "' + (gambar[i].name || 'tanpa nama') +
+        '" tidak bisa dibaca lagi — pilih ulang gambarnya lewat tombol Gambar lampiran.');
+    }
     const berkas = 'escapes' + (++noMedia) + '.' + g.ext;
     zip.file('word/media/' + berkas, g.blob);
     const rid = 'rId' + (++noRel);
@@ -3722,7 +3727,11 @@ fotoFile.addEventListener('change', async () => {
     try {
       const bmp = await createImageBitmap(g);
       if(bmp.close) bmp.close();
-      fotoDraft.push(g);
+      // isinya disalin ke memori sekarang juga: berkas aslinya boleh saja
+      // dipindah, diganti nama, atau dihapus sebelum laporan digenerate
+      const salinan = new Blob([await g.arrayBuffer()], { type: g.type || 'image/jpeg' });
+      salinan.name = g.name;
+      fotoDraft.push(salinan);
     } catch(e){ tolak.push(g.name); }
   }
   gambarDaftarFoto();
@@ -4013,6 +4022,7 @@ btn.addEventListener('click', async () => {
     }
     const out = new JSZip();
     let done = 0, zipName;
+    const gagal = [];
 
     // ganti desa + terapkan variasi narasi pada satu document.xml
     const olahNarasi = (xml, f, dstFill) => {
@@ -4065,6 +4075,18 @@ btn.addEventListener('click', async () => {
         replaceTautanRels(await rel.async('string'), lama, linkIn));
       return replaceTautan(xml, lama, linkIn);
     };
+    // Berkas yang dipilih hanya dipegang sebagai rujukan; isinya baru dibaca
+    // di sini. Bila sementara itu berkasnya dipindah, diganti nama, atau
+    // disimpan ulang oleh Word, peramban memulangkan galat sistem yang tidak
+    // menyebut berkas mana — jadi namanya disebutkan sendiri.
+    const bukaDokumen = async f => {
+      try { return await JSZip.loadAsync(f.file); }
+      catch(e){
+        throw new Error('berkas "' + f.name + '" tidak bisa dibaca lagi — ' +
+          'kemungkinan sudah dipindah, diganti nama, atau disimpan ulang setelah dimasukkan. ' +
+          'Hapus dari daftar lalu masukkan lagi.');
+      }
+    };
     const bungkus = async (zip, xml, name) => {
       zip.file('word/document.xml', xml);
       const blob = await zip.generateAsync({ type: 'blob',
@@ -4115,14 +4137,14 @@ btn.addEventListener('click', async () => {
       const base = g[g.length - 1];
       setStatus('membaca ' + g.length + ' laporan bulanan: ' +
         g.map(f => BULAN[f.src.mIdx]).join(', ') + ' ...');
-      const zip = await JSZip.loadAsync(base.file);
+      const zip = await bukaDokumen(base);
       let xml = await zip.file('word/document.xml').async('string');
       // nama desa pada baris tabel bulan lain ikut diseragamkan
       const samakanDesa = (f, rows) => (!desaIn || !f.desa || desaIn === f.desa) ? rows
         : rows.map(r => r.map(c => String(c == null ? '' : c).split(f.desa).join(desaIn)));
       const bulanan = [];
       for(const o of g){
-        const oz = o === base ? zip : await JSZip.loadAsync(o.file);
+        const oz = o === base ? zip : await bukaDokumen(o);
         let ox = o === base ? xml : await oz.file('word/document.xml').async('string');
         if(o !== base && desaIn && o.desa && desaIn !== o.desa) ox = replaceDesa(ox, o.desa, desaIn);
         const orel = oz.file('word/_rels/document.xml.rels');
@@ -4161,25 +4183,36 @@ btn.addEventListener('click', async () => {
       zipName = 'Laporan SKP Triwulan ' + ROMAWI[q.qIdx] + ' ' + q.year + '.zip';
     } else {
       const dst = { mIdx: parseInt(selBulan.value, 10), year };
+      // satu berkas bermasalah tidak boleh membatalkan yang lain: kegagalannya
+      // dicatat, sisanya tetap digenerate, lalu dilaporkan di akhir
       for(const f of files){
         if(!f.src) continue;
         if(f.src.mIdx === dst.mIdx && f.src.year === dst.year){
           setStatus('bulan target sama dengan bulan asal: ' + f.name, 'warn'); continue;
         }
         setStatus('memproses ' + f.name + ' ...');
-        const zip = await JSZip.loadAsync(f.file);
-        let xml = await zip.file('word/document.xml').async('string');
-        xml = olahLampiran(olahNarasi(xml, f, dst), f, 'Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year);
-        xml = await olahTautan(zip, xml, f);
-        // gambar disisipkan setelah transformasi tanggal supaya keterangannya
-        // tidak ikut diubah oleh penggantian nama bulan
-        await bungkus(zip, await sisipGambarLampiran(zip, transformXml(xml, f.src, dst, aturTanggal(f)), f.gambar),
-          transformName(f.name, f.src, dst));
+        try {
+          const zip = await bukaDokumen(f);
+          let xml = await zip.file('word/document.xml').async('string');
+          xml = olahLampiran(olahNarasi(xml, f, dst), f, 'Bulan ' + BULAN[dst.mIdx] + ' ' + dst.year);
+          xml = await olahTautan(zip, xml, f);
+          // gambar disisipkan setelah transformasi tanggal supaya keterangannya
+          // tidak ikut diubah oleh penggantian nama bulan
+          await bungkus(zip, await sisipGambarLampiran(zip, transformXml(xml, f.src, dst, aturTanggal(f)), f.gambar),
+            transformName(f.name, f.src, dst));
+        } catch(e){
+          const pesan = (e && e.message) ? e.message : String(e);
+          gagal.push(pesan.includes(f.name) ? pesan : f.name + ' — ' + pesan);
+        }
       }
       zipName = 'Laporan SKP ' + BULAN[dst.mIdx] + ' ' + dst.year + '.zip';
     }
 
-    if(!done){ setStatus('tidak ada file yang diproses.', 'warn'); return; }
+    if(!done){
+      setStatus(gagal.length ? 'gagal: ' + gagal.join(' | ') : 'tidak ada file yang diproses.',
+        gagal.length ? 'err' : 'warn');
+      return;
+    }
     setStatus('membungkus ZIP ...');
     const zipBlob = await out.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     const a = document.createElement('a');
@@ -4187,7 +4220,10 @@ btn.addEventListener('click', async () => {
     a.download = zipName;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-    setStatus('✓ ' + done + ' laporan digenerate — periksa & sesuaikan angka realisasinya di Word.', 'ok');
+    setStatus('✓ ' + done + ' laporan digenerate' +
+      (gagal.length ? '; ' + gagal.length + ' gagal: ' + gagal.join(' | ')
+                    : ' — periksa & sesuaikan angka realisasinya di Word.'),
+      gagal.length ? 'warn' : 'ok');
   } catch(e){
     setStatus('gagal: ' + (e.message || e), 'err');
   } finally {
