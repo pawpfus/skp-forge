@@ -341,10 +341,10 @@
       </span>
     </div>
     <div class="lamp-foot">
-      <button id="lamp-impor" title="BACA isi berkas untuk mengisi tabel &amp; deskripsi. Gambar (.jpg/.png) dibaca tulisannya lewat OCR, lalu gambarnya sekalian dilampirkan ke laporan.">Unggah dokumen</button>
+      <button id="lamp-impor" title="BACA isi berkas (.pdf/.docx/.xlsx/.csv) untuk mengisi tabel &amp; deskripsi. Gambar tidak dibaca isinya — gambar yang dijatuhkan di sini ikut dilampirkan saja.">Unggah dokumen</button>
       <input type="file" id="lamp-impor-file"
         accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.jfif,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
-      <button id="lamp-foto" title="LAMPIRKAN foto ke halaman lampiran laporan. Isinya tidak dibaca.">+ Gambar lampiran</button>
+      <button id="lamp-foto" title="LAMPIRKAN gambar ke laporan, atau menggantikan gambar bawaan bulan lalu. Isinya tidak dibaca.">+ Gambar lampiran</button>
       <input type="file" id="lamp-foto-file" multiple
         accept=".jpg,.jpeg,.jfif,.png,.webp,.bmp,.gif,.tif,.tiff" style="display:none">
       <button id="lamp-add">+ Baris</button>
@@ -2484,7 +2484,6 @@ async function kenaliGambar(worker, sumber){
   return { teks, baris: baris.length ? baris
     : teks.split(/\r?\n/).map(t => t.trim()).filter(t => t) };
 }
-async function bacaGambar(file, lapor){ return pakaiOcr(w => kenaliGambar(w, file), lapor); }
 
 // halaman pindaian dibaca berurutan; kemajuan dilaporkan per halaman
 async function bacaHalaman(gambar, lapor){
@@ -2502,22 +2501,12 @@ async function bacaHalaman(gambar, lapor){
 // misalnya buku harian LTT yang satu berkasnya memuat banyak bulan & desa
 async function bacaBerkasLampiran(file, labels, lapor, ctx){
   const nama = file.name.toLowerCase();
-  if(RE_GAMBAR.test(nama)){
-    const { baris } = await bacaGambar(file, lapor);
-    if(!baris.length) throw new Error('tidak ada tulisan yang terbaca dari gambar itu');
-    const polos = baris.map(t => t.replace(/ {2,}/g, ' ').trim()).filter(t => t);
-    const keg = parseDiseminasi(polos);
-    if(keg.length) return { rows: barisDiseminasi(keg, labels), jumlah: keg.length,
-      jenis: 'kegiatan diseminasi (dari gambar)', teks: narasiDariBaris(polos) };
-    const tabel = tabelDariTeks(baris.join('\n'));
-    if(tabel){
-      const rows = petakanTabel(tabel, labels);
-      if(rows.length) return { rows, jumlah: rows.length,
-        jenis: 'baris tabel (dari gambar)', teks: narasiDariBaris(polos) };
-    }
-    return { rows: null, jumlah: polos.length, jenis: 'baris teks (dari gambar)',
-      teks: polos.join('\n') };
-  }
+  // Berkas gambar TIDAK dibaca isinya. Hasil OCR atas foto dan tangkapan layar
+  // terlalu sering meleset, lalu kekeliruannya masuk ke tabel dan deskripsi
+  // sehingga laporannya justru berantakan. Gambar hanya dilampirkan atau
+  // dipakai mengganti gambar bawaan laporan.
+  if(RE_GAMBAR.test(nama))
+    throw new Error('gambar tidak dibaca isinya — gambar hanya dilampirkan atau mengganti gambar bawaan laporan');
   if(nama.endsWith('.pdf')){
     const isi = await file.arrayBuffer();
     let baris = await pdfBaris(isi);
@@ -3863,34 +3852,43 @@ function gambarDaftarFoto(){
 }
 document.getElementById('lamp-ganti').addEventListener('change', gambarDaftarFoto);
 tombolFoto.addEventListener('click', () => fotoFile.click());
-// gambar diuji baca saat dipilih supaya berkas rusak ketahuan sekarang,
-// bukan saat laporan digenerate
-fotoFile.addEventListener('change', async () => {
-  const pilih = [...fotoFile.files];
-  fotoFile.value = '';
-  if(!pilih.length) return;
-  const hint = document.getElementById('lamp-hint');
+
+// Gambar hanya dilampirkan — isinya tidak pernah dibaca. Berkasnya dibuka
+// sekarang juga supaya yang rusak ketahuan saat dipilih, bukan saat laporan
+// digenerate, dan isinya disalin ke memori supaya berkas aslinya boleh saja
+// dipindah, diganti nama, atau dihapus sesudahnya.
+async function lampirkanGambar(daftar, hint){
+  const pilih = [].concat(daftar);
   const tolak = [];
   for(const g of pilih){
-    if(!RE_GAMBAR.test(g.name)){ tolak.push(g.name); continue; }
+    if(!RE_GAMBAR.test(g.name || '')){ tolak.push(g.name); continue; }
+    if(fotoDraft.some(a => a.name === g.name && a.size === g.size)) continue;
     try {
       const bmp = await createImageBitmap(g);
       if(bmp.close) bmp.close();
-      // isinya disalin ke memori sekarang juga: berkas aslinya boleh saja
-      // dipindah, diganti nama, atau dihapus sebelum laporan digenerate
       const salinan = new Blob([await g.arrayBuffer()], { type: g.type || 'image/jpeg' });
       salinan.name = g.name;
       fotoDraft.push(salinan);
     } catch(e){ tolak.push(g.name); }
   }
   gambarDaftarFoto();
-  const heic = tolak.filter(n => RE_HEIC.test(n));
+  const heic = tolak.filter(n => RE_HEIC.test(n || ''));
+  const bawaan = (files[lampIdx] && files[lampIdx].gambarDok || []).length;
+  const mode = document.getElementById('lamp-ganti').value;
   hint.textContent = (heic.length ? 'format .heic/.heif tidak bisa dibuka peramban (' + heic.join(', ') +
       ') — simpan ulang sebagai .jpg lebih dulu. ' : '') +
     (tolak.length > heic.length ? 'tidak bisa dibaca sebagai gambar: ' +
-      tolak.filter(n => !RE_HEIC.test(n)).join(', ') + '. ' : '') +
-    (fotoDraft.length ? fotoDraft.length + ' gambar akan disisipkan di halaman lampiran laporan — tekan SIMPAN'
-                      : 'belum ada gambar yang terpilih');
+      tolak.filter(n => !RE_HEIC.test(n || '')).join(', ') + '. ' : '') +
+    (!fotoDraft.length ? 'belum ada gambar yang terpilih'
+      : fotoDraft.length + ' gambar ' +
+        (bawaan && mode !== 'tambah' ? 'akan menggantikan gambar bawaan laporan'
+                                     : 'akan disisipkan di halaman lampiran laporan') +
+        ' (isinya tidak dibaca) — tekan SIMPAN');
+}
+fotoFile.addEventListener('change', async () => {
+  const pilih = [...fotoFile.files];
+  fotoFile.value = '';
+  if(pilih.length) await lampirkanGambar(pilih, document.getElementById('lamp-hint'));
 });
 
 BULAN.forEach((b, i) => {
@@ -3973,7 +3971,7 @@ function gambarLampiran(){
     document.getElementById('lamp-periode').hidden = true;
     document.getElementById('lamp-impor').hidden = false;
     document.getElementById('lamp-hint').textContent =
-      'laporan ini tidak punya tabel data — unggah dokumen (gambar/.pdf/.docx) untuk mengisi deskripsi, ketik sendiri di bawah, atau lampirkan gambar.';
+      'laporan ini tidak punya tabel data — unggah dokumen (.pdf/.docx) untuk mengisi deskripsi, ketik sendiri di bawah, atau lampirkan gambar.';
     return;
   }
   draft = f.lamp.rows.map(r => r.slice());
@@ -3994,10 +3992,10 @@ function gambarLampiran(){
   const nyambung = diseminasi || (f.tipe && RINGKAS[f.tipe.key]);
   document.getElementById('lamp-impor').hidden = false;
   document.getElementById('lamp-hint').textContent = diseminasi
-    ? 'unggah Laporan Diseminasi (.pdf — termasuk hasil pindaian, .docx, atau gambar) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
+    ? 'unggah Laporan Diseminasi (.pdf — termasuk hasil pindaian — atau .docx) — target, capaian, kesimpulan, saran, permasalahan, upaya, dan output ikut diselaraskan'
     : (auto ? (aturPeriode ? 'kolom tanggal (kuning) mengikuti bulan di samping — ubah bila tabelnya untuk bulan lain. '
                            : 'kolom tanggal (kuning) mengikuti periode target otomatis. ')
-            : 'unggah dokumen (gambar/.pdf/.docx/.xlsx/.csv) atau isi manual di bawah. ') +
+            : 'unggah dokumen (.pdf/.docx/.xlsx/.csv) atau isi manual di bawah. ') +
       (nyambung ? 'Angkanya otomatis diselaraskan ke target, capaian, kesimpulan, permasalahan, upaya, dan output.' : '');
 }
 
@@ -4085,8 +4083,13 @@ imporFile.addEventListener('change', async () => {
   const hint = document.getElementById('lamp-hint');
   const lamp = files[lampIdx].lamp;
   try {
+    // gambar langsung dilampirkan tanpa dibaca — isinya tidak diterka
+    if(RE_GAMBAR.test(file.name.toLowerCase())){
+      await lampirkanGambar(file, hint);
+      return;
+    }
     hint.textContent = 'membaca ' + file.name + ' ...';
-    // gambar dibaca OCR: unduhan pustaka & kemajuan pengenalan dilaporkan
+    // halaman PDF pindaian dibaca OCR: kemajuannya dilaporkan
     let halaman = '';
     const kabar = m => {
       if(!m || !m.status) return;
@@ -4116,24 +4119,11 @@ imporFile.addEventListener('change', async () => {
       gambarGrid();
     }
     if(hasil.teks) deskEl.value = hasil.teks;
-    // Berkas gambar sekalian dilampirkan: tulisannya sudah dibaca jadi
-    // deskripsi, dan fotonya sendiri jadi bukti yang sepadan dengan deskripsi
-    // itu. Berkas dokumen (.pdf/.docx/.xlsx) tidak — isinya sudah masuk tabel.
-    let lampir = false;
-    if(RE_GAMBAR.test(file.name.toLowerCase()) &&
-       !fotoDraft.some(g => g.name === file.name && g.size === file.size)){
-      const salinan = new Blob([await file.arrayBuffer()], { type: file.type || 'image/jpeg' });
-      salinan.name = file.name;
-      fotoDraft.push(salinan);
-      gambarDaftarFoto();
-      lampir = true;
-    }
     hint.textContent = hasil.jumlah + ' ' + hasil.jenis + ' terbaca' +
       (!lamp ? ' — laporan ini tidak punya tabel data, jadi hanya deskripsinya yang terisi'
              : hasil.rows && hasil.rows.length ? ''
              : ' — tabel tidak ikut terisi, isi manual bila perlu') +
-      (hasil.teks ? '; deskripsi ikut terisi' : '') +
-      (lampir ? '; gambarnya sekalian dilampirkan' : '') + ' — periksa lalu tekan SIMPAN';
+      (hasil.teks ? '; deskripsi ikut terisi' : '') + ' — periksa lalu tekan SIMPAN';
   } catch(e){
     hint.textContent = 'gagal: ' + (e.message || e);
   }
