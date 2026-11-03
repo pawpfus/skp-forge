@@ -2054,8 +2054,15 @@ function parseDiseminasi(paras){
     return '';
   };
   // baris penutup blok: "Pitu Riawa, 8 Juni 2026" / "Mengetahui," / "NIP. ..."
+  // Sisa cap kamera GPS pada foto kegiatan juga mengakhiri uraian: letaknya
+  // selalu sesudah Masalah/Solusi dan sebelum baris penutup, dan bentuknya
+  // bukan kalimat — koordinat, waktu pemotretan, atau penggalan keterangan
+  // lokasi yang terpotong garis tepi foto.
+  const capFoto = t => /\d{1,2}\s+\w{3,9}\s+\d{4}\s+\d{1,2}[:.]\d{2}/.test(t) ||
+    /-?\d{1,3}\.\d{4,}\s*,\s*-?\d{1,3}\.\d{4,}/.test(t) ||
+    /^[|/\\_]\s*\S/.test(t);
   const penutup = t => /^[A-Za-z .'-]+,\s*\d{1,2}\s+\S+\s+\d{4}$/.test(t) ||
-    /^(Mengetahui|Koordinator|NIP\.)/i.test(t);
+    /^(Mengetahui|Koordinator|NIP\.)/i.test(t) || capFoto(t);
   const reHasil = new RegExp('^' + NOMOR + 'Hasil Kegiatan\\s*:\\s*', 'i');
   const hasilDari = blok => {
     let i = blok.findIndex(t => reHasil.test(t));
@@ -2323,15 +2330,27 @@ function petakanTabel(rows, labels){
 }
 
 // susun kegiatan hasil impor mengikuti urutan & jumlah kolom tabel tujuan
+// metode/lokasi/peserta diringkas jadi satu kalimat untuk tabel yang tidak
+// punya kolom tersendiri bagi ketiganya (mis. lampiran Kelompencapir)
+const ringkasKegiatan = k => [k.metode, k.lokasi ? 'di ' + k.lokasi : '',
+  k.peserta ? 'bersama ' + awalKecil(k.peserta) : ''].filter(t => t).join(' ').trim();
+
 function barisDiseminasi(kegiatan, labels){
+  const ada = re => labels.some(l => re.test(l));
+  // tabel tujuan tidak selalu punya kolom rinci; bila tidak ada, keterangannya
+  // yang menampung metode, lokasi, dan peserta
+  const rinci = ada(/lokasi|tempat/i) || ada(/metode/i) || ada(/peserta/i);
   return kegiatan.map((k, i) => labels.map(l => {
     if(/^no\.?$/i.test(l.trim())) return String(i + 1);
     if(/tanggal|waktu/i.test(l)) return k.tanggal;
-    if(/materi|kegiatan|uraian/i.test(l)) return k.materi;
+    // "Judul / Deskripsi Konten" pada lampiran Kelompencapir sepadan dengan
+    // materi yang dideraskan
+    if(/materi|kegiatan|uraian|judul|konten|deskripsi/i.test(l)) return k.materi;
     if(/lokasi|tempat/i.test(l)) return k.lokasi;
     if(/metode/i.test(l)) return k.metode;
     if(/peserta/i.test(l)) return k.peserta;
     if(/hasil|masalah|solusi/i.test(l)) return k.hasil;
+    if(!rinci && /keterangan/i.test(l)) return ringkasKegiatan(k);
     return '';
   }));
 }
@@ -3242,6 +3261,9 @@ const RINGKAS = {
     });
     const daftarKanal = Object.keys(kanal).sort((a, b) => kanal[b] - kanal[a])
       .map(k => k + ' (' + kanal[k] + ' konten)');
+    // judul tanpa penanda "(Kanal : akun)" — mis. materi diseminasi lapangan —
+    // tidak punya kanal untuk disebut, jadi klausanya dilewati saja
+    const adaKanal = Object.keys(kanal).some(k => k !== 'kanal lainnya');
     return {
       target: { kol: 2, cocok: /konten|materi/i, baris: ['1',
         'Penderasan materi informasi pertanian terkini kepada petani melalui media digital (WhatsApp Group, media sosial, dan platform digital lainnya)',
@@ -3250,11 +3272,13 @@ const RINGKAS = {
         'Konten informasi pertanian dideraskan', N + ' konten', N + ' konten', '100%', 'Terlaksana'] },
       kesimpulan: [
         'Kegiatan penderasan materi informasi Kelompencapir Digital telah terlaksana sesuai dengan rencana kerja yang telah ditetapkan, dengan realisasi ' + N + ' konten atau 100% dari target ' + N + ' konten yang ditetapkan untuk ' + B + ',',
-        'Sebanyak ' + N + ' konten informasi pertanian telah dideraskan pada ' + hari + ' hari penayangan sepanjang ' + B + ' melalui kanal ' + daftarKata(daftarKanal) + ' kepada anggota Kelompencapir Digital di wilayah binaan Desa ' + D + ' sebagaimana rincian pada lampiran laporan ini,'
+        'Sebanyak ' + N + ' konten informasi pertanian telah dideraskan pada ' + hari + ' hari penayangan sepanjang ' + B + (adaKanal ? ' melalui kanal ' + daftarKata(daftarKanal) : '') + ' kepada anggota Kelompencapir Digital di wilayah binaan Desa ' + D + ' sebagaimana rincian pada lampiran laporan ini,'
       ],
       output: [
         { cocok: /konten|materi/i,
-          deskripsi: 'Konten materi informasi pertanian terkini telah dideraskan melalui ' + daftarKata(Object.keys(kanal)) + ' kepada petani dan kelompok tani wilayah binaan',
+          deskripsi: 'Konten materi informasi pertanian terkini telah dideraskan' +
+            (adaKanal ? ' melalui ' + daftarKata(Object.keys(kanal)) : '') +
+            ' kepada petani dan kelompok tani wilayah binaan',
           volume: N, satuan: 'Konten' }
       ],
       masalah: [], upaya: []
