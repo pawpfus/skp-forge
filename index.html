@@ -3905,7 +3905,7 @@ const periodeTarget = () => ({
 // dipertahankan, hari tambahan dibiarkan kosong, baris non-tanggal (TOTAL)
 // tetap di bawah
 function terapkanPeriodeDraft(lamp, per){
-  const kol = lamp.dateCols[0];
+  const kol = lamp && lamp.dateCols ? lamp.dateCols[0] : null;
   if(kol == null) return;
   const RE = /^(\d{2})\/(\d{2})\/(\d{4})(\s*\((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\))?/;
   const harian = [], lain = [];
@@ -4091,19 +4091,22 @@ imporFile.addEventListener('change', async () => {
       hint.textContent = kata + halaman + p + ' — ' + file.name;
     };
     const f = files[lampIdx];
+    // laporan tertentu (Penyediaan Benih, RDKK, CPCL) tidak punya tabel data —
+    // editornya hanya untuk deskripsi, jadi lamp bernilai null
+    const dateCols = lamp ? lamp.dateCols : [];
     const ctx = { desa: document.getElementById('sel-desa').value.trim() || f.desa,
-      periode: (lamp.dateCols.length && !document.getElementById('lamp-periode').hidden)
+      periode: (dateCols.length && !document.getElementById('lamp-periode').hidden)
         ? { mIdx: parseInt(selLampBulan.value, 10), year: parseInt(selLampTahun.value, 10) }
-        : (lamp.periode || periodeTarget()) };
-    const hasil = await bacaBerkasLampiran(file, lamp.labels, kabar, ctx);
-    if(hasil.rows && hasil.rows.length){
+        : ((lamp && lamp.periode) || periodeTarget()) };
+    const hasil = await bacaBerkasLampiran(file, lamp ? lamp.labels : [], kabar, ctx);
+    if(lamp && hasil.rows && hasil.rows.length){
       // tabel bertanggal: jumlah baris tetap mengikuti tanggal, isi ditimpa
-      draft = lamp.dateCols.length
+      draft = dateCols.length
         ? draft.map((r, i) => hasil.rows[i]
-            ? r.map((v, c) => lamp.dateCols.includes(c) ? v : (hasil.rows[i][c] || ''))
+            ? r.map((v, c) => dateCols.includes(c) ? v : (hasil.rows[i][c] || ''))
             : r)
         : hasil.rows;
-      if(lamp.dateCols.length) perbaruiBarisTotal(draft, lamp.dateCols);
+      if(dateCols.length) perbaruiBarisTotal(draft, dateCols);
       gambarGrid();
     }
     if(hasil.teks) deskEl.value = hasil.teks;
@@ -4120,7 +4123,9 @@ imporFile.addEventListener('change', async () => {
       lampir = true;
     }
     hint.textContent = hasil.jumlah + ' ' + hasil.jenis + ' terbaca' +
-      (hasil.rows && hasil.rows.length ? '' : ' — tabel tidak ikut terisi, isi manual bila perlu') +
+      (!lamp ? ' — laporan ini tidak punya tabel data, jadi hanya deskripsinya yang terisi'
+             : hasil.rows && hasil.rows.length ? ''
+             : ' — tabel tidak ikut terisi, isi manual bila perlu') +
       (hasil.teks ? '; deskripsi ikut terisi' : '') +
       (lampir ? '; gambarnya sekalian dilampirkan' : '') + ' — periksa lalu tekan SIMPAN';
   } catch(e){
